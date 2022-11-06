@@ -65,6 +65,35 @@ fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u3
         .sum()
 }
 
+/// check whether the block is constant along x or y axis
+fn is_const_along_x_or_y(image: &LuminanceImage, x: u32, y: u32) -> bool {
+    let along_y = || {
+        for yy in 0..8 {
+            let v1 = image.get_pixel(x, y + yy);
+            for xx in 1..8 {
+                let v2 = image.get_pixel(x + xx, y + yy);
+                if v1 != v2 {
+                    return false;
+                }
+            }
+        }
+        true
+    };
+    let along_x = || {
+        for xx in 0..8 {
+            let v1 = image.get_pixel(x + xx, y);
+            for yy in 1..8 {
+                let v2 = image.get_pixel(x + xx, y + yy);
+                if v1 != v2 {
+                    return false;
+                }
+            }
+        }
+        true
+    };
+    along_x() || along_y()
+}
+
 fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec<i32> {
     struct State {
         zero: Vec<i32>,
@@ -76,39 +105,10 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
 
     let lock = RwLock::new(State { zero, votes });
 
-    let is_const_along_x_or_y = |x, y| {
-        // check whether the block is constant along x or y axis
-        let along_y = || {
-            for yy in 0..8 {
-                let v1 = image.get_pixel(x, y + yy);
-                for xx in 1..8 {
-                    let v2 = image.get_pixel(x + xx, y + yy);
-                    if v1 != v2 {
-                        return false;
-                    }
-                }
-            }
-            true
-        };
-        let along_x = || {
-            for xx in 0..8 {
-                let v1 = image.get_pixel(x + xx, y);
-                for yy in 1..8 {
-                    let v2 = image.get_pixel(x + xx, y + yy);
-                    if v1 != v2 {
-                        return false;
-                    }
-                }
-            }
-            true
-        };
-        along_x() || along_y()
-    };
-
     (0..image.width() - 7).into_par_iter().for_each(|x| {
         for y in 0..image.height() - 7 {
             let number_of_zeroes = compute_number_of_zeros(&cosine, image, x, y);
-            let const_along = is_const_along_x_or_y(x, y);
+            let const_along = is_const_along_x_or_y(image, x, y);
 
             {
                 let mut state = lock.write().unwrap();
