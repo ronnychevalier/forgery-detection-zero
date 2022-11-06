@@ -18,9 +18,8 @@ struct Arguments {
 fn main() -> anyhow::Result<()> {
     let args = Arguments::parse();
 
-    let file = File::open(args.image)?;
-    let reader = BufReader::new(file);
-    let jpeg = ImageReader::with_format(reader, ImageFormat::Jpeg).decode()?;
+    let reader = ImageReader::open(args.image)?;
+    let jpeg = reader.decode()?;
 
     let jpeg_99 = args.jpeg_99.and_then(|jpeg_99| {
         let file = File::open(jpeg_99).ok()?;
