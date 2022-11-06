@@ -1,11 +1,11 @@
 /// An attempt to reimplement [ZERO](https://github.com/tinankh/ZERO) in Rust.
 ///
-/// At the moment, it is a C-like Rust implementation copied from the original C implementation.
-/// It will be refactored later.
+/// At the moment, it is a C-like Rust implementation very close to the original C implementation.
+/// It is in the process of being refactored to be more idiomatic.
 use std::f64::consts::{LN_10, PI};
 use std::sync::RwLock;
 
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Pixel};
+use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 
 use itertools::Itertools;
 
@@ -13,7 +13,18 @@ use libm::lgamma;
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
-type LuminanceImage = ImageBuffer<Luma<f64>, Vec<f64>>;
+mod convert;
+
+use convert::{LuminanceImage, ToLumaZero};
+
+/// Represents the error that can be raised when using [`Zero`].
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("image and jpeg99 have different dimensions")]
+    DifferentDimensions,
+}
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Default, Clone, Copy)]
 pub struct ForgedRegion {
@@ -23,6 +34,112 @@ pub struct ForgedRegion {
     pub y1: u32,
     pub grid: i32,
     pub lnfa: f64,
+}
+
+pub struct Forgeries {
+    votes: Vec<i32>,
+    forgery_mask: Vec<i32>,
+    forged_regions: Vec<ForgedRegion>,
+    lnfa_grids: [f64; 64],
+    main_grid: i32,
+}
+
+impl Forgeries {
+    pub fn votes(&self) -> &[i32] {
+        self.votes.as_ref()
+    }
+
+    pub fn forgery_mask(&self) -> &[i32] {
+        self.forgery_mask.as_ref()
+    }
+
+    pub fn forged_regions(&self) -> &[ForgedRegion] {
+        self.forged_regions.as_ref()
+    }
+
+    pub fn lnfa_grids(&self) -> [f64; 64] {
+        self.lnfa_grids
+    }
+
+    pub fn main_grid(&self) -> i32 {
+        self.main_grid
+    }
+}
+
+pub struct Zero {
+    luminance: LuminanceImage,
+
+    jpeg_99: Option<LuminanceImage>,
+}
+
+impl Zero {
+    pub fn from_image(image: &DynamicImage) -> Self {
+        let luminance = image.to_luma32f_zero();
+
+        Self {
+            luminance,
+            jpeg_99: None,
+        }
+    }
+
+    pub fn with_jpeg_99<'a>(mut self, image: impl Into<Option<&'a DynamicImage>>) -> Result<Self> {
+        let Some(image) = image.into() else {
+            return Ok(self);
+        };
+
+        if image.dimensions() != self.luminance.dimensions() {
+            return Err(Error::DifferentDimensions);
+        }
+
+        self.jpeg_99 = Some(image.to_luma32f_zero());
+        Ok(self)
+    }
+
+    pub fn detect_forgeries(self) -> (Forgeries, Option<(Vec<ForgedRegion>, Vec<i32>, Vec<i32>)>) {
+        // The API ensures that both `self.luminance` and `self.jpeg_99` have the same dimensions.
+        let width = self.luminance.width();
+        let height = self.luminance.height();
+
+        let votes = compute_grid_votes_per_pixel(&self.luminance);
+        let (main_grid, lnfa_grids) = detect_global_grids(&votes, width, height);
+        let (forged_regions, forgery_mask) = detect_forgeries(&votes, width, height, main_grid, 63);
+
+        let forgeries = Forgeries {
+            main_grid,
+            lnfa_grids,
+            forged_regions,
+            forgery_mask,
+            votes,
+        };
+
+        if main_grid > -1 {
+            if let Some(jpeg_99) = self.jpeg_99 {
+                let mut jpeg_99_votes = compute_grid_votes_per_pixel(&jpeg_99);
+                // update votemap by avoiding the votes for the main grid
+                for x in 0..width {
+                    for y in 0..height {
+                        let index = (x + y * width) as usize;
+                        if forgeries.votes[index] == main_grid {
+                            jpeg_99_votes[index] = -1;
+                        }
+                    }
+                }
+
+                // Try to detect an imposed JPEG grid.  No grid is to be excluded
+                // and we are interested only in grid with origin (0,0), so:
+                // grid_to_exclude = -1 and grid_max = 0
+                let (jpeg_99_forged_regions, jpeg_99_forgery_mask) =
+                    detect_forgeries(&jpeg_99_votes, width, height, -1, 0);
+
+                return (
+                    forgeries,
+                    Some((jpeg_99_forged_regions, jpeg_99_forgery_mask, jpeg_99_votes)),
+                );
+            }
+        }
+
+        (forgeries, None)
+    }
 }
 
 fn cosine_table() -> [[f64; 8]; 8] {
@@ -416,88 +533,4 @@ fn detect_forgeries(
     }
 
     (forged_regions, forgery_mask_reg)
-}
-
-pub fn zero(
-    jpeg: &DynamicImage,
-    jpeg_99: Option<&DynamicImage>,
-) -> (
-    i32,
-    [f64; 64],
-    Vec<ForgedRegion>,
-    Vec<i32>,
-    Vec<i32>,
-    Option<(Vec<ForgedRegion>, Vec<i32>, Vec<i32>)>,
-) {
-    let luminance = jpeg.to_luma32f_zero();
-    let votes = compute_grid_votes_per_pixel(&luminance);
-    let (main_grid, lnfa_grids) = detect_global_grids(&votes, jpeg.width(), jpeg.height());
-    let (forged_regions, forgery_mask) =
-        detect_forgeries(&votes, jpeg.width(), jpeg.height(), main_grid, 63);
-
-    if main_grid > -1 {
-        if let Some(jpeg_99) = jpeg_99 {
-            let jpeg_99_luminance = jpeg_99.to_luma32f_zero();
-            let mut jpeg_99_votes = compute_grid_votes_per_pixel(&jpeg_99_luminance);
-            // update votemap by avoiding the votes for the main grid
-            for x in 0..jpeg.width() {
-                for y in 0..jpeg.height() {
-                    let index = (x + y * jpeg.width()) as usize;
-                    if votes[index] == main_grid {
-                        jpeg_99_votes[index] = -1;
-                    }
-                }
-            }
-
-            // Try to detect an imposed JPEG grid.  No grid is to be excluded
-            // and we are interested only in grid with origin (0,0), so:
-            // grid_to_exclude = -1 and grid_max = 0
-            let (jpeg_99_forged_regions, jpeg_99_forgery_mask) =
-                detect_forgeries(&jpeg_99_votes, jpeg_99.width(), jpeg_99.height(), -1, 0);
-
-            return (
-                main_grid,
-                lnfa_grids,
-                forged_regions,
-                forgery_mask,
-                votes,
-                Some((jpeg_99_forged_regions, jpeg_99_forgery_mask, jpeg_99_votes)),
-            );
-        }
-    }
-
-    (
-        main_grid,
-        lnfa_grids,
-        forged_regions,
-        forgery_mask,
-        votes,
-        None,
-    )
-}
-
-trait ToLumaZero {
-    fn to_luma32f_zero(&self) -> ImageBuffer<Luma<f64>, Vec<f64>>;
-}
-
-#[inline]
-fn rgb_to_luma_zero(rgb: &[u8]) -> f64 {
-    let r = f64::from(rgb[0]);
-    let g = f64::from(rgb[1]);
-    let b = f64::from(rgb[2]);
-
-    (b.mul_add(0.114, r.mul_add(0.299, g * 0.587))).round()
-}
-
-impl ToLumaZero for DynamicImage {
-    fn to_luma32f_zero(&self) -> LuminanceImage {
-        let mut buffer: LuminanceImage = ImageBuffer::new(self.width(), self.height());
-        for (to, from) in buffer.pixels_mut().zip(self.pixels()) {
-            let gray = to.channels_mut();
-            let rgb = from.2.channels();
-            gray[0] = rgb_to_luma_zero(rgb);
-        }
-
-        buffer
-    }
 }

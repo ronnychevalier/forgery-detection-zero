@@ -5,9 +5,10 @@ edition = "2021"
 
 [dependencies]
 image = { version = "0.24" }
-itertools = "0.10.5"
+itertools = "0.10"
 libm = "0.2.5"
-rayon = "1.5.3"
+rayon = "1.5"
+thiserror = "1"
 
 [dev-dependencies]
 anyhow = "1"
