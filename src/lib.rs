@@ -234,12 +234,12 @@ fn detect_global_grids(votes: &[i32], width: u32, height: u32) -> (i32, [f64; 64
     // compute the NFA value for all the significant grids.  votes are
     // correlated by irregular 8x8 blocks dividing by 64 gives a rough
     // count of the number of independent votes
-    let mut lnfa_grids = [0.0f64; 64];
-    for i in 0..64 {
-        let n = width * height / 64;
+    let n = width * height / 64;
+    let lnfa_grids: [f64; 64] = std::array::from_fn(|i| {
         let k = grid_votes[i] / 64;
-        lnfa_grids[i] = log_nfa(n, k, p, log_nt);
-    }
+
+        log_nfa(n, k, p, log_nt)
+    });
 
     // meaningful grid -> main grid found!
     if most_voted_grid >= 0 && most_voted_grid < 64 && lnfa_grids[most_voted_grid as usize] < 0.0 {
