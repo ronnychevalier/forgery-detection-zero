@@ -44,22 +44,25 @@ fn main() -> anyhow::Result<()> {
         .with_jpeg_99(&jpeg_99)
         .context("The images should have the same dimension")?
         .detect_forgeries();
-
-    if forgeries.main_grid() == -1 {
-        println!("No overall JPEG grid found.");
-    } else if forgeries.main_grid() > -1 {
+    if let Some(main_grid) = forgeries.main_grid() {
         println!(
             "main grid found: #{} ({},{}) log(nfa) = {}\n",
-            forgeries.main_grid(),
-            forgeries.main_grid() % 8,
-            forgeries.main_grid() / 8,
-            forgeries.lnfa_grids()[forgeries.main_grid() as usize]
+            main_grid,
+            main_grid % 8,
+            main_grid / 8,
+            forgeries.lnfa_grids()[main_grid as usize]
         );
         global_grids += 1;
+    } else {
+        println!("No overall JPEG grid found.");
     }
 
     for (i, &value) in forgeries.lnfa_grids().iter().enumerate() {
-        if value < 0.0 && i != forgeries.main_grid() as usize {
+        if value < 0.0
+            && forgeries
+                .main_grid()
+                .map_or(true, |grid| grid as usize != i)
+        {
             println!(
                 "meaningful global grid found: #{i} ({},{}) log(nfa) = {value}\n",
                 i % 8,
@@ -70,7 +73,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     for forged_region in forgeries.forged_regions() {
-        if forgeries.main_grid() != -1 {
+        if forgeries.main_grid().is_some() {
             println!("\nA meaningful grid different from the main one was found here:");
         } else {
             println!("\nA meaningful grid was found here:");
@@ -90,13 +93,17 @@ fn main() -> anyhow::Result<()> {
             forged_region.grid % 8,
             forged_region.grid / 8
         );
+
         println!(" log(nfa) = {}", forged_region.lnfa);
     }
 
     let votes = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
-        let index = (x + y * jpeg.width()) as usize;
-
-        image::Luma([forgeries.votes()[index] as u8])
+        let value = if let Some(value) = forgeries.votes()[[x, y]] {
+            value as u8
+        } else {
+            255
+        };
+        image::Luma([value])
     });
     votes.save("votes.png")?;
 
@@ -108,7 +115,7 @@ fn main() -> anyhow::Result<()> {
     forgery_mask.save("mask_f.png")?;
 
     if let Some((missing_regions, jpeg_99_forgery_mask, jpeg_99_votes)) = &jpeg_99 {
-        if forgeries.main_grid() > -1 {
+        if forgeries.main_grid().is_some() {
             for missing_region in missing_regions {
                 println!("\nA region with missing JPEG grid was found here:");
                 print!(
@@ -126,14 +133,19 @@ fn main() -> anyhow::Result<()> {
                     missing_region.grid % 8,
                     missing_region.grid / 8
                 );
+
                 println!(" log(nfa) = {}", missing_region.lnfa);
             }
         }
 
         let votes = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
-            let index = (x + y * jpeg.width()) as usize;
+            let value = if let Some(value) = jpeg_99_votes[[x, y]] {
+                value as u8
+            } else {
+                255
+            };
 
-            image::Luma([jpeg_99_votes[index] as u8])
+            image::Luma([value])
         });
         votes.save("votes_jpeg.png")?;
 
@@ -148,11 +160,11 @@ fn main() -> anyhow::Result<()> {
     let number_of_regions =
         forgeries.forged_regions().len() + jpeg_99.map_or(0, |jpeg_99| jpeg_99.0.len());
 
-    if number_of_regions == 0 && forgeries.main_grid() < 1 {
+    if number_of_regions == 0 && forgeries.main_grid().unwrap_or(0) < 1 {
         println!("\nNo suspicious traces found in the image with the performed analysis.");
     }
 
-    if forgeries.main_grid() > 0 {
+    if forgeries.main_grid().unwrap_or(0) > 0 {
         println!("\nThe most meaningful JPEG grid origin is not (0,0).");
         println!("This may indicate that the image has been cropped.");
     }

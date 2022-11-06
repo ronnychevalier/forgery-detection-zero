@@ -3,9 +3,10 @@
 /// At the moment, it is a C-like Rust implementation very close to the original C implementation.
 /// It is in the process of being refactored to be more idiomatic.
 use std::f64::consts::{LN_10, PI};
+use std::ops::{Index, IndexMut};
 use std::sync::RwLock;
 
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
+use image::{DynamicImage, GenericImageView};
 
 use itertools::Itertools;
 
@@ -32,21 +33,21 @@ pub struct ForgedRegion {
     pub y0: u32,
     pub x1: u32,
     pub y1: u32,
-    pub grid: i32,
+    pub grid: u8,
     pub lnfa: f64,
 }
 
 pub struct Forgeries {
-    votes: Vec<i32>,
+    votes: Votes,
     forgery_mask: Vec<i32>,
     forged_regions: Vec<ForgedRegion>,
     lnfa_grids: [f64; 64],
-    main_grid: i32,
+    main_grid: Option<u8>,
 }
 
 impl Forgeries {
-    pub fn votes(&self) -> &[i32] {
-        self.votes.as_ref()
+    pub fn votes(&self) -> &Votes {
+        &self.votes
     }
 
     pub fn forgery_mask(&self) -> &[i32] {
@@ -61,7 +62,7 @@ impl Forgeries {
         self.lnfa_grids
     }
 
-    pub fn main_grid(&self) -> i32 {
+    pub fn main_grid(&self) -> Option<u8> {
         self.main_grid
     }
 }
@@ -95,14 +96,14 @@ impl Zero {
         Ok(self)
     }
 
-    pub fn detect_forgeries(self) -> (Forgeries, Option<(Vec<ForgedRegion>, Vec<i32>, Vec<i32>)>) {
+    pub fn detect_forgeries(self) -> (Forgeries, Option<(Vec<ForgedRegion>, Vec<i32>, Votes)>) {
         // The API ensures that both `self.luminance` and `self.jpeg_99` have the same dimensions.
         let width = self.luminance.width();
         let height = self.luminance.height();
 
-        let votes = compute_grid_votes_per_pixel(&self.luminance);
-        let (main_grid, lnfa_grids) = detect_global_grids(&votes, width, height);
-        let (forged_regions, forgery_mask) = detect_forgeries(&votes, width, height, main_grid, 63);
+        let votes = Votes::from_luminance(&self.luminance);
+        let (main_grid, lnfa_grids) = votes.detect_global_grids();
+        let (forged_regions, forgery_mask) = votes.detect_forgeries(main_grid, 63);
 
         let forgeries = Forgeries {
             votes,
@@ -112,24 +113,24 @@ impl Zero {
             main_grid,
         };
 
-        if main_grid > -1 {
+        if let Some(main_grid) = main_grid {
             if let Some(jpeg_99) = self.jpeg_99 {
-                let mut jpeg_99_votes = compute_grid_votes_per_pixel(&jpeg_99);
+                let mut jpeg_99_votes = Votes::from_luminance(&jpeg_99);
                 // update votemap by avoiding the votes for the main grid
                 for x in 0..width {
                     for y in 0..height {
                         let index = (x + y * width) as usize;
-                        if forgeries.votes[index] == main_grid {
-                            jpeg_99_votes[index] = -1;
+                        if forgeries.votes[index] == Some(main_grid) {
+                            jpeg_99_votes[index] = None;
                         }
                     }
                 }
 
                 // Try to detect an imposed JPEG grid.  No grid is to be excluded
                 // and we are interested only in grid with origin (0,0), so:
-                // grid_to_exclude = -1 and grid_max = 0
+                // grid_to_exclude = None and grid_max = 0
                 let (jpeg_99_forged_regions, jpeg_99_forgery_mask) =
-                    detect_forgeries(&jpeg_99_votes, width, height, -1, 0);
+                    jpeg_99_votes.detect_forgeries(None, 0);
 
                 return (
                     forgeries,
@@ -139,6 +140,308 @@ impl Zero {
         }
 
         (forgeries, None)
+    }
+}
+
+pub struct Votes {
+    /// A vote is an unsigned integer between `0` and `63`
+    votes: Box<[Option<u8>]>,
+
+    width: u32,
+    height: u32,
+    log_nt: f64,
+}
+
+impl Index<usize> for Votes {
+    type Output = Option<u8>;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.votes[index]
+    }
+}
+
+impl Index<[u32; 2]> for Votes {
+    type Output = Option<u8>;
+
+    fn index(&self, xy: [u32; 2]) -> &Self::Output {
+        &self.votes[(xy[0] + xy[1] * self.width) as usize]
+    }
+}
+
+impl IndexMut<usize> for Votes {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.votes[index]
+    }
+}
+
+impl Votes {
+    fn from_luminance(image: &LuminanceImage) -> Self {
+        struct State {
+            zero: Vec<u32>,
+            votes: Vec<Option<u8>>,
+        }
+        let cosine = cosine_table();
+        let zero = vec![0u32; (image.width() * image.height()) as usize];
+        let votes = vec![None; (image.width() * image.height()) as usize];
+
+        let lock = RwLock::new(State { zero, votes });
+
+        (0..image.height() - 7).into_par_iter().for_each(|y| {
+            for x in 0..image.width() - 7 {
+                let number_of_zeroes = compute_number_of_zeros(&cosine, image, x, y);
+                let const_along = is_const_along_x_or_y(image, x, y);
+
+                {
+                    let mut state = lock.write().unwrap();
+
+                    // check all pixels in the block and update votes
+                    for xx in x..x + 8 {
+                        for yy in y..y + 8 {
+                            let index = (xx + yy * image.width()) as usize;
+                            match number_of_zeroes.cmp(&state.zero[index]) {
+                                std::cmp::Ordering::Equal => {
+                                    // if two grids are tied in number of zeros, do not vote
+                                    state.votes[index] = None;
+                                }
+                                std::cmp::Ordering::Greater => {
+                                    // update votes when the current grid has more zeros
+                                    state.zero[index] = number_of_zeroes;
+                                    state.votes[index] = if const_along {
+                                        None
+                                    } else {
+                                        Some(((x % 8) + (y % 8) * 8) as u8)
+                                    };
+                                }
+                                std::cmp::Ordering::Less => (),
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut votes = lock.into_inner().unwrap().votes;
+
+        // set pixels on the border to non valid votes - only pixels that
+        // belong to the 64 full 8x8 blocks inside the image can vote
+        for xx in 0..image.width() {
+            for yy in 0..7 {
+                let index = (xx + yy * image.width()) as usize;
+                votes[index] = None;
+            }
+            for yy in (image.height() - 7)..image.height() {
+                let index = (xx + yy * image.width()) as usize;
+                votes[index] = None;
+            }
+        }
+        for yy in 0..image.height() {
+            for xx in 0..7 {
+                let index = (xx + yy * image.width()) as usize;
+                votes[index] = None;
+            }
+            for xx in (image.width() - 7)..image.width() {
+                let index = (xx + yy * image.width()) as usize;
+                votes[index] = None;
+            }
+        }
+
+        Self {
+            votes: votes.into_boxed_slice(),
+            width: image.width(),
+            height: image.height(),
+            log_nt: 2.0f64.mul_add(
+                f64::from(image.height()).log10(),
+                2.0f64.mul_add(64.0f64.log10(), 2.0 * f64::from(image.width()).log10()),
+            ),
+        }
+    }
+
+    fn detect_global_grids(&self) -> (Option<u8>, [f64; 64]) {
+        let mut grid_votes = [0; 64];
+        let mut max_votes = 0;
+        let mut most_voted_grid = None;
+        let p = 1.0 / 64.0;
+
+        // count votes per possible grid origin
+        for x in 0..self.width {
+            for y in 0..self.height {
+                if let Some(grid) = self[[x, y]] {
+                    grid_votes[grid as usize] += 1;
+
+                    // keep track of maximum of votes and the associated grid
+                    if grid_votes[grid as usize] > max_votes {
+                        max_votes = grid_votes[grid as usize];
+                        most_voted_grid = Some(grid);
+                    }
+                }
+            }
+        }
+
+        // compute the NFA value for all the significant grids.  votes are
+        // correlated by irregular 8x8 blocks dividing by 64 gives a rough
+        // count of the number of independent votes
+        let n = self.width * self.height / 64;
+        let lnfa_grids: [f64; 64] = std::array::from_fn(|i| {
+            let k = grid_votes[i] / 64;
+
+            log_nfa(n, k, p, self.log_nt)
+        });
+
+        // meaningful grid -> main grid found!
+        if let Some(most_voted_grid) = most_voted_grid {
+            if lnfa_grids[most_voted_grid as usize] < 0.0 {
+                return (Some(most_voted_grid), lnfa_grids);
+            }
+        }
+
+        (None, lnfa_grids)
+    }
+
+    /// Detects zones which are inconsistent with a given grid
+    fn detect_forgeries(
+        &self,
+        grid_to_exclude: Option<u8>,
+        grid_max: u8,
+    ) -> (Vec<ForgedRegion>, Vec<i32>) {
+        let p = 1.0 / 64.0;
+
+        // Distance to look for neighbors in the region growing process.
+        // A meaningful forgery must have a density of votes of at least
+        // 1/64. Thus, its votes should not be in mean further away one
+        // from another than a distance of 8. One could use a little
+        // more to allow for some variation in the distribution.
+        let w = 9;
+
+        // minimal block size that can lead to a meaningful detection
+        let min_size = (64.0 * self.log_nt / 64.0f64.log10()).ceil() as usize;
+
+        let mut mask_aux = vec![0; self.votes.len()];
+        let mut used = vec![false; self.votes.len()];
+
+        let mut forgery_mask = vec![0; self.votes.len()];
+        let mut forgery_mask_reg = vec![0; self.votes.len()];
+
+        let mut forged_regions = Vec::new();
+
+        // region growing of zones that voted for other than the main grid
+        for x in 0..self.width {
+            for y in 0..self.height {
+                let index = (x + y * self.width) as usize;
+                if used[index] {
+                    continue;
+                }
+                if self[index] == grid_to_exclude {
+                    continue;
+                }
+                let Some(grid) = self[index] else {
+                    continue;
+                };
+                if grid > grid_max {
+                    continue;
+                }
+
+                let mut x0 = x; /* region bounding box */
+                let mut y0 = y;
+                let mut x1 = x;
+                let mut y1 = y;
+
+                used[index] = true;
+
+                let mut regions_xy = vec![(x, y)];
+
+                // iteratively add neighbor pixel of pixels in the region
+                let mut i = 0;
+                while i < regions_xy.len() {
+                    let (reg_x, reg_y) = regions_xy[i];
+                    for xx in reg_x.saturating_sub(w)..=reg_x.saturating_add(w).min(self.width - 1)
+                    {
+                        for yy in
+                            reg_y.saturating_sub(w)..=reg_y.saturating_add(w).min(self.height - 1)
+                        {
+                            let index = (xx + yy * self.width) as usize;
+                            if used[index] {
+                                continue;
+                            }
+                            if self[index] != Some(grid) {
+                                continue;
+                            }
+
+                            used[index] = true;
+                            regions_xy.push((xx, yy));
+                            if xx < x0 {
+                                x0 = xx;
+                            }
+                            if yy < y0 {
+                                y0 = yy;
+                            }
+                            if xx > x1 {
+                                x1 = xx;
+                            }
+                            if yy > y1 {
+                                y1 = yy;
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+
+                // compute the number of false alarms (NFA) for the regions with at least the minimal size
+                if regions_xy.len() >= min_size {
+                    let n = (x1 - x0 + 1) * (y1 - y0 + 1) / 64;
+                    let k = regions_xy.len() / 64;
+                    let lnfa = log_nfa(n, k as u32, p, self.log_nt);
+                    if lnfa < 0.0 {
+                        // meaningful different grid found
+                        forged_regions.push(ForgedRegion {
+                            x0,
+                            y0,
+                            x1,
+                            y1,
+                            grid,
+                            lnfa,
+                        });
+
+                        // mark points of the region in the forgery mask
+                        for (reg_x, reg_y) in &regions_xy {
+                            let index = reg_x + reg_y * self.width;
+                            forgery_mask[index as usize] = 255;
+                        }
+                    }
+                }
+            }
+        }
+
+        // regularized forgery mask by a morphologic closing operator
+        for x in w..(self.width - w) {
+            for y in w..(self.height - w) {
+                let index = (x + y * self.width) as usize;
+                if forgery_mask[index] != 0 {
+                    for xx in (x - w)..=(x + w) {
+                        for yy in (y - w)..=(y + w) {
+                            let index = (xx + yy * self.width) as usize;
+                            mask_aux[index] = 255;
+                            forgery_mask_reg[index] = 255;
+                        }
+                    }
+                }
+            }
+        }
+
+        for x in w..(self.width - w) {
+            for y in w..(self.height - w) {
+                let index = (x + y * self.width) as usize;
+                if mask_aux[index] == 0 {
+                    for xx in (x - w)..=(x + w) {
+                        for yy in (y - w)..=(y + w) {
+                            let index = (xx + yy * self.width) as usize;
+                            forgery_mask_reg[index] = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        (forged_regions, forgery_mask_reg)
     }
 }
 
@@ -211,79 +514,6 @@ fn is_const_along_x_or_y(image: &LuminanceImage, x: u32, y: u32) -> bool {
     along_x() || along_y()
 }
 
-fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec<i32> {
-    struct State {
-        zero: Vec<u32>,
-        votes: Vec<i32>,
-    }
-    let cosine = cosine_table();
-    let zero = vec![0u32; (image.width() * image.height()) as usize];
-    let votes = vec![-1i32; (image.width() * image.height()) as usize];
-
-    let lock = RwLock::new(State { zero, votes });
-
-    (0..image.height() - 7).into_par_iter().for_each(|y| {
-        for x in 0..image.width() - 7 {
-            let number_of_zeroes = compute_number_of_zeros(&cosine, image, x, y);
-            let const_along = is_const_along_x_or_y(image, x, y);
-
-            {
-                let mut state = lock.write().unwrap();
-
-                // check all pixels in the block and update votes
-                for xx in x..x + 8 {
-                    for yy in y..y + 8 {
-                        let index = (xx + yy * image.width()) as usize;
-                        match number_of_zeroes.cmp(&state.zero[index]) {
-                            std::cmp::Ordering::Equal => {
-                                // if two grids are tied in number of zeros, do not vote
-                                state.votes[index] = -1;
-                            }
-                            std::cmp::Ordering::Greater => {
-                                // update votes when the current grid has more zeros
-                                state.zero[index] = number_of_zeroes;
-                                state.votes[index] = if const_along {
-                                    -1
-                                } else {
-                                    ((x % 8) + (y % 8) * 8) as i32
-                                };
-                            }
-                            std::cmp::Ordering::Less => (),
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    let mut votes = lock.into_inner().unwrap().votes;
-
-    // set pixels on the border to non valid votes - only pixels that
-    // belong to the 64 full 8x8 blocks inside the image can vote
-    for xx in 0..image.width() {
-        for yy in 0..7 {
-            let index = (xx + yy * image.width()) as usize;
-            votes[index] = -1;
-        }
-        for yy in (image.height() - 7)..image.height() {
-            let index = (xx + yy * image.width()) as usize;
-            votes[index] = -1;
-        }
-    }
-    for yy in 0..image.height() {
-        for xx in 0..7 {
-            let index = (xx + yy * image.width()) as usize;
-            votes[index] = -1;
-        }
-        for xx in (image.width() - 7)..image.width() {
-            let index = (xx + yy * image.width()) as usize;
-            votes[index] = -1;
-        }
-    }
-
-    votes
-}
-
 /// Computes the logarithm of the number of false alarms (NFA) to base 10.
 ///
 /// `NFA = NT.b(n,k,p)` the return value is `log10(NFA)`
@@ -349,192 +579,4 @@ fn log_nfa(n: u32, k: u32, p: f64, log_nt: f64) -> f64 {
     }
 
     bin_tail.log10() + log_nt
-}
-
-fn detect_global_grids(votes: &[i32], width: u32, height: u32) -> (i32, [f64; 64]) {
-    let log_nt =
-        2.0 * 64.0f64.log10() + 2.0 * f64::from(width).log10() + 2.0 * f64::from(height).log10();
-    let mut grid_votes = [0; 64];
-    let mut max_votes = 0;
-    let mut most_voted_grid = -1;
-    let p = 1.0 / 64.0;
-
-    // count votes per possible grid origin
-    for x in 0..width {
-        for y in 0..height {
-            let index = (x + y * width) as usize;
-
-            if votes[index] >= 0 && votes[index] < 64 {
-                let grid = votes[index];
-                grid_votes[grid as usize] += 1;
-
-                // keep track of maximum of votes and the associated grid
-                if grid_votes[grid as usize] > max_votes {
-                    max_votes = grid_votes[grid as usize];
-                    most_voted_grid = grid;
-                }
-            }
-        }
-    }
-
-    // compute the NFA value for all the significant grids.  votes are
-    // correlated by irregular 8x8 blocks dividing by 64 gives a rough
-    // count of the number of independent votes
-    let n = width * height / 64;
-    let lnfa_grids: [f64; 64] = std::array::from_fn(|i| {
-        let k = grid_votes[i] / 64;
-
-        log_nfa(n, k, p, log_nt)
-    });
-
-    // meaningful grid -> main grid found!
-    if (0..64).contains(&most_voted_grid) && lnfa_grids[most_voted_grid as usize] < 0.0 {
-        return (most_voted_grid, lnfa_grids);
-    }
-
-    (-1, lnfa_grids)
-}
-
-/// Detects zones which are inconsistent with a given grid
-fn detect_forgeries(
-    votes: &[i32],
-    width: u32,
-    height: u32,
-    grid_to_exclude: i32,
-    grid_max: i32,
-) -> (Vec<ForgedRegion>, Vec<i32>) {
-    let log_nt =
-        2.0 * 64.0f64.log10() + 2.0 * f64::from(width).log10() + 2.0 * f64::from(height).log10();
-    let p = 1.0 / 64.0;
-
-    // Distance to look for neighbors in the region growing process.
-    // A meaningful forgery must have a density of votes of at least
-    // 1/64. Thus, its votes should not be in mean further away one
-    // from another than a distance of 8. One could use a little
-    // more to allow for some variation in the distribution.
-    let w = 9;
-
-    // minimal block size that can lead to a meaningful detection
-    let min_size = (64.0 * log_nt / 64.0f64.log10()).ceil() as usize;
-
-    let mut mask_aux = vec![0; (width * height) as usize];
-    let mut used = vec![false; (width * height) as usize];
-
-    let mut forgery_mask = vec![0; (width * height) as usize];
-    let mut forgery_mask_reg = vec![0; (width * height) as usize];
-
-    let mut forged_regions = Vec::new();
-
-    // region growing of zones that voted for other than the main grid
-    for x in 0..width {
-        for y in 0..height {
-            let index = (x + y * width) as usize;
-            if used[index]
-                || votes[index] == grid_to_exclude
-                || votes[index] < 0
-                || votes[index] > grid_max
-            {
-                continue;
-            }
-
-            let grid = votes[index];
-            let mut x0 = x; /* region bounding box */
-            let mut y0 = y;
-            let mut x1 = x;
-            let mut y1 = y;
-
-            used[index] = true;
-
-            let mut regions_xy = vec![(x, y)];
-
-            // iteratively add neighbor pixel of pixels in the region
-            let mut i = 0;
-            while i < regions_xy.len() {
-                let (reg_x, reg_y) = regions_xy[i];
-                for xx in reg_x.saturating_sub(w)..=reg_x.saturating_add(w).min(width - 1) {
-                    for yy in reg_y.saturating_sub(w)..=reg_y.saturating_add(w).min(height - 1) {
-                        let index = (xx + yy * width) as usize;
-                        if used[index] {
-                            continue;
-                        }
-                        if votes[index] != grid {
-                            continue;
-                        }
-
-                        used[index] = true;
-                        regions_xy.push((xx, yy));
-                        if xx < x0 {
-                            x0 = xx;
-                        }
-                        if yy < y0 {
-                            y0 = yy;
-                        }
-                        if xx > x1 {
-                            x1 = xx;
-                        }
-                        if yy > y1 {
-                            y1 = yy;
-                        }
-                    }
-                }
-                i += 1;
-            }
-
-            // compute the number of false alarms (NFA) for the regions with at least the minimal size
-            if regions_xy.len() >= min_size {
-                let n = (x1 - x0 + 1) * (y1 - y0 + 1) / 64;
-                let k = regions_xy.len() / 64;
-                let lnfa = log_nfa(n, k as u32, p, log_nt);
-                if lnfa < 0.0 {
-                    // meaningful different grid found
-                    forged_regions.push(ForgedRegion {
-                        x0,
-                        y0,
-                        x1,
-                        y1,
-                        grid,
-                        lnfa,
-                    });
-
-                    // mark points of the region in the forgery mask
-                    for (reg_x, reg_y) in &regions_xy {
-                        let index = reg_x + reg_y * width;
-                        forgery_mask[index as usize] = 255;
-                    }
-                }
-            }
-        }
-    }
-
-    // regularized forgery mask by a morphologic closing operator
-    for x in w..(width - w) {
-        for y in w..(height - w) {
-            let index = (x + y * width) as usize;
-            if forgery_mask[index] != 0 {
-                for xx in (x - w)..=(x + w) {
-                    for yy in (y - w)..=(y + w) {
-                        let index = (xx + yy * width) as usize;
-                        mask_aux[index] = 255;
-                        forgery_mask_reg[index] = 255;
-                    }
-                }
-            }
-        }
-    }
-
-    for x in w..(width - w) {
-        for y in w..(height - w) {
-            let index = (x + y * width) as usize;
-            if mask_aux[index] == 0 {
-                for xx in (x - w)..=(x + w) {
-                    for yy in (y - w)..=(y + w) {
-                        let index = (xx + yy * width) as usize;
-                        forgery_mask_reg[index] = 0;
-                    }
-                }
-            }
-        }
-    }
-
-    (forged_regions, forgery_mask_reg)
 }
