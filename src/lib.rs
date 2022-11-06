@@ -73,7 +73,8 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
                         .cartesian_product(0..8)
                         .map(|(xx, yy)| {
                             let index = (x + xx + (y + yy) * image.width()) as usize;
-                            let pixel = vec[index];
+                            // coordinates are within bounds
+                            let pixel = unsafe { vec.get_unchecked(index) };
                             pixel
                                 * cosine[xx as usize][i as usize]
                                 * cosine[yy as usize][j as usize]
