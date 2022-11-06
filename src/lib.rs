@@ -105,8 +105,8 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
 
     let lock = RwLock::new(State { zero, votes });
 
-    (0..image.width() - 7).into_par_iter().for_each(|x| {
-        for y in 0..image.height() - 7 {
+    (0..image.height() - 7).into_par_iter().for_each(|y| {
+        for x in 0..image.width() - 7 {
             let number_of_zeroes = compute_number_of_zeros(&cosine, image, x, y);
             let const_along = is_const_along_x_or_y(image, x, y);
 
