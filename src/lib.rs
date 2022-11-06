@@ -31,7 +31,7 @@ fn cosine_table() -> [[f64; 8]; 8] {
     cosine
 }
 
-fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f32>, Vec<f32>>) -> Vec<i32> {
+fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec<i32> {
     let cosine = cosine_table();
     let mut zero = vec![0i32; (image.width() * image.height()) as usize];
     let mut votes = vec![-1i32; (image.width() * image.height()) as usize];
@@ -69,7 +69,7 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f32>, Vec<f32>>) -> Vec
 
                     for xx in 0..8 {
                         for yy in 0..8 {
-                            let pixel = f64::from(image.get_pixel(x + xx, y + yy).0[0]);
+                            let pixel = image.get_pixel(x + xx, y + yy).0[0];
                             dct_ij += pixel
                                 * cosine[xx as usize][i as usize]
                                 * cosine[yy as usize][j as usize];
@@ -84,11 +84,7 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f32>, Vec<f32>>) -> Vec
                     // in such case, the optimal threshold to decide if a
                     // coefficient is zero or not is the midpoint between
                     // 0 and 1, thus 0.5
-                    if dct_ij.abs() < 0.5 {
-                        1
-                    } else {
-                        0
-                    }
+                    i32::from(dct_ij.abs() < 0.5)
                 })
                 .sum();
 
@@ -455,21 +451,21 @@ pub fn zero(
 }
 
 trait ToLumaZero {
-    fn to_luma32f_zero(&self) -> ImageBuffer<Luma<f32>, Vec<f32>>;
+    fn to_luma32f_zero(&self) -> ImageBuffer<Luma<f64>, Vec<f64>>;
 }
 
 #[inline]
-fn rgb_to_luma_zero(rgb: &[u8]) -> f32 {
-    let r = f32::from(rgb[0]);
-    let g = f32::from(rgb[1]);
-    let b = f32::from(rgb[2]);
+fn rgb_to_luma_zero(rgb: &[u8]) -> f64 {
+    let r = f64::from(rgb[0]);
+    let g = f64::from(rgb[1]);
+    let b = f64::from(rgb[2]);
 
     (b.mul_add(0.114, r.mul_add(0.299, g * 0.587))).round()
 }
 
 impl ToLumaZero for DynamicImage {
-    fn to_luma32f_zero(&self) -> ImageBuffer<Luma<f32>, Vec<f32>> {
-        let mut buffer: ImageBuffer<Luma<f32>, Vec<f32>> =
+    fn to_luma32f_zero(&self) -> ImageBuffer<Luma<f64>, Vec<f64>> {
+        let mut buffer: ImageBuffer<Luma<_>, Vec<_>> =
             ImageBuffer::new(self.width(), self.height());
         for (to, from) in buffer.pixels_mut().zip(self.pixels()) {
             let gray = to.channels_mut();
