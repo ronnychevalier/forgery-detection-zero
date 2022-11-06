@@ -304,31 +304,29 @@ fn detect_forgeries(
             let mut i = 0;
             while i < regions_xy.len() {
                 let (reg_x, reg_y) = regions_xy[i];
-                for xx in reg_x.saturating_sub(w)..=reg_x.saturating_add(w) {
-                    for yy in reg_y.saturating_sub(w)..=reg_y.saturating_add(w) {
-                        if xx < width && yy < height {
-                            let index = (xx + yy * width) as usize;
-                            if used[index] {
-                                continue;
-                            }
-                            if votes[index] != grid {
-                                continue;
-                            }
+                for xx in reg_x.saturating_sub(w)..=reg_x.saturating_add(w).min(width - 1) {
+                    for yy in reg_y.saturating_sub(w)..=reg_y.saturating_add(w).min(height - 1) {
+                        let index = (xx + yy * width) as usize;
+                        if used[index] {
+                            continue;
+                        }
+                        if votes[index] != grid {
+                            continue;
+                        }
 
-                            used[index] = true;
-                            regions_xy.push((xx, yy));
-                            if xx < x0 {
-                                x0 = xx;
-                            }
-                            if yy < y0 {
-                                y0 = yy;
-                            }
-                            if xx > x1 {
-                                x1 = xx;
-                            }
-                            if yy > y1 {
-                                y1 = yy;
-                            }
+                        used[index] = true;
+                        regions_xy.push((xx, yy));
+                        if xx < x0 {
+                            x0 = xx;
+                        }
+                        if yy < y0 {
+                            y0 = yy;
+                        }
+                        if xx > x1 {
+                            x1 = xx;
+                        }
+                        if yy > y1 {
+                            y1 = yy;
                         }
                     }
                 }
