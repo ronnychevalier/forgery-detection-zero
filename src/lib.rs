@@ -13,6 +13,8 @@ use libm::lgamma;
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
+type LuminanceImage = ImageBuffer<Luma<f64>, Vec<f64>>;
+
 #[derive(Default, Clone, Copy)]
 pub struct ForgedRegion {
     pub x0: u32,
@@ -32,6 +34,35 @@ fn cosine_table() -> [[f64; 8]; 8] {
     });
 
     cosine
+}
+
+/// compute DCT for 8x8 blocks staring at x,y and count its zeros
+fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u32, y: u32) -> i32 {
+    let vec = image.as_raw();
+    (0..8)
+        .cartesian_product(0..8)
+        .filter(|(i, j)| *i > 0 || *j > 0)
+        .map(|(i, j)| {
+            let normalization = 0.25
+                * (if i == 0 { 1.0 / 2.0f64.sqrt() } else { 1.0 })
+                * (if j == 0 { 1.0 / 2.0f64.sqrt() } else { 1.0 });
+            let dct_ij = (0..8)
+                .cartesian_product(0..8)
+                .map(|(xx, yy)| {
+                    let index = (x + xx + (y + yy) * image.width()) as usize;
+                    // coordinates are within bounds
+                    let pixel = unsafe { vec.get_unchecked(index) };
+                    pixel * cosine[xx as usize][i as usize] * cosine[yy as usize][j as usize]
+                })
+                .sum::<f64>()
+                * normalization;
+            // the finest quantization in JPEG is to integer values.
+            // in such case, the optimal threshold to decide if a
+            // coefficient is zero or not is the midpoint between
+            // 0 and 1, thus 0.5
+            i32::from(dct_ij.abs() < 0.5)
+        })
+        .sum()
 }
 
 fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec<i32> {
@@ -76,35 +107,7 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
 
     (0..image.width() - 7).into_par_iter().for_each(|x| {
         for y in 0..image.height() - 7 {
-            // compute DCT for 8x8 blocks staring at x,y and count its zeros
-            let vec = image.as_raw();
-            let number_of_zeroes = (0..8)
-                .cartesian_product(0..8)
-                .filter(|(i, j)| *i > 0 || *j > 0)
-                .map(|(i, j)| {
-                    let normalization = 0.25
-                        * (if i == 0 { 1.0 / 2.0f64.sqrt() } else { 1.0 })
-                        * (if j == 0 { 1.0 / 2.0f64.sqrt() } else { 1.0 });
-                    let dct_ij = (0..8)
-                        .cartesian_product(0..8)
-                        .map(|(xx, yy)| {
-                            let index = (x + xx + (y + yy) * image.width()) as usize;
-                            // coordinates are within bounds
-                            let pixel = unsafe { vec.get_unchecked(index) };
-                            pixel
-                                * cosine[xx as usize][i as usize]
-                                * cosine[yy as usize][j as usize]
-                        })
-                        .sum::<f64>()
-                        * normalization;
-                    // the finest quantization in JPEG is to integer values.
-                    // in such case, the optimal threshold to decide if a
-                    // coefficient is zero or not is the midpoint between
-                    // 0 and 1, thus 0.5
-                    i32::from(dct_ij.abs() < 0.5)
-                })
-                .sum();
-
+            let number_of_zeroes = compute_number_of_zeros(&cosine, image, x, y);
             let const_along = is_const_along_x_or_y(x, y);
 
             {
@@ -487,9 +490,8 @@ fn rgb_to_luma_zero(rgb: &[u8]) -> f64 {
 }
 
 impl ToLumaZero for DynamicImage {
-    fn to_luma32f_zero(&self) -> ImageBuffer<Luma<f64>, Vec<f64>> {
-        let mut buffer: ImageBuffer<Luma<_>, Vec<_>> =
-            ImageBuffer::new(self.width(), self.height());
+    fn to_luma32f_zero(&self) -> LuminanceImage {
+        let mut buffer: LuminanceImage = ImageBuffer::new(self.width(), self.height());
         for (to, from) in buffer.pixels_mut().zip(self.pixels()) {
             let gray = to.channels_mut();
             let rgb = from.2.channels();
