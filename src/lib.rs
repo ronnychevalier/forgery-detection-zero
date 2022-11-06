@@ -36,30 +36,38 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
     let mut zero = vec![0i32; (image.width() * image.height()) as usize];
     let mut votes = vec![-1i32; (image.width() * image.height()) as usize];
 
-    for x in 0..image.width() - 7 {
-        for y in 0..image.height() - 7 {
-            let mut const_along_x = true;
-            let mut const_along_y = true;
-
-            // check whether the block is constant along x or y axis
-            for xx in 0..8 {
-                if !const_along_x && !const_along_y {
-                    break;
-                }
-                for yy in 0..8 {
-                    if !const_along_x && !const_along_y {
-                        break;
-                    }
-
-                    if image.get_pixel(x + xx, y + yy) != image.get_pixel(x, y + yy) {
-                        const_along_x = false;
-                    }
-                    if image.get_pixel(x + xx, y + yy) != image.get_pixel(x + xx, y) {
-                        const_along_y = false;
+    let is_const_along_x_or_y = |x, y| {
+        // check whether the block is constant along x or y axis
+        let along_y = || {
+            for yy in 0..8 {
+                let v1 = image.get_pixel(x, y + yy);
+                for xx in 1..8 {
+                    let v2 = image.get_pixel(x + xx, y + yy);
+                    if v1 != v2 {
+                        return false;
                     }
                 }
             }
+            true
+        };
+        let along_x = || {
+            for xx in 0..8 {
+                let v1 = image.get_pixel(x + xx, y);
+                for yy in 1..8 {
+                    let v2 = image.get_pixel(x + xx, y + yy);
+                    if v1 != v2 {
+                        return false;
+                    }
+                }
+            }
+            true
+        };
+        along_x() || along_y()
+    };
 
+    (0..image.width() - 7)
+        .cartesian_product(0..image.height() - 7)
+        .for_each(|(x, y)| {
             // compute DCT for 8x8 blocks staring at x,y and count its zeros
             let vec = image.as_raw();
             let number_of_zeroes = (0..8)
@@ -81,7 +89,6 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
                         })
                         .sum::<f64>()
                         * normalization;
-
                     // the finest quantization in JPEG is to integer values.
                     // in such case, the optimal threshold to decide if a
                     // coefficient is zero or not is the midpoint between
@@ -89,6 +96,8 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
                     i32::from(dct_ij.abs() < 0.5)
                 })
                 .sum();
+
+            let const_along = is_const_along_x_or_y(x, y);
 
             // check all pixels in the block and update votes
             for xx in x..x + 8 {
@@ -100,7 +109,7 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
                     } else if number_of_zeroes > zero[index] {
                         // update votes when the current grid has more zeros
                         zero[index] = number_of_zeroes;
-                        votes[index] = if const_along_x || const_along_y {
+                        votes[index] = if const_along {
                             -1
                         } else {
                             ((x % 8) + (y % 8) * 8) as i32
@@ -108,8 +117,7 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
                     }
                 }
             }
-        }
-    }
+        });
 
     // set pixels on the border to non valid votes - only pixels that
     // belong to the 64 full 8x8 blocks inside the image can vote
