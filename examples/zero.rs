@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::Parser;
 
 use image::io::Reader as ImageReader;
@@ -9,17 +10,24 @@ use image::{ImageBuffer, ImageFormat};
 
 use forgery_detection_zero::Zero;
 
+/// Detects JPEG grids and forgeries
 #[derive(Parser)]
 struct Arguments {
+    /// Path to the image
     image: PathBuf,
+
+    /// Path to the same image converted to a 99% quality JPEG
     jpeg_99: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Arguments::parse();
 
-    let reader = ImageReader::open(args.image)?;
-    let jpeg = reader.decode()?;
+    let reader = ImageReader::open(&args.image)
+        .with_context(|| format!("Failed to open the image {}", args.image.display()))?;
+    let jpeg = reader
+        .decode()
+        .with_context(|| format!("Failed to decode the image {}", args.image.display()))?;
 
     let jpeg_99 = args.jpeg_99.and_then(|jpeg_99| {
         let file = File::open(jpeg_99).ok()?;
@@ -33,7 +41,8 @@ fn main() -> anyhow::Result<()> {
     let mut global_grids = 0;
 
     let (forgeries, jpeg_99) = Zero::from_image(&jpeg)
-        .with_jpeg_99(&jpeg_99)?
+        .with_jpeg_99(&jpeg_99)
+        .context("The images should have the same dimension")?
         .detect_forgeries();
 
     if forgeries.main_grid() == -1 {
