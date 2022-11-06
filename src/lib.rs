@@ -3,12 +3,15 @@
 /// At the moment, it is a C-like Rust implementation copied from the original C implementation.
 /// It will be refactored later.
 use std::f64::consts::{LN_10, PI};
+use std::sync::RwLock;
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Pixel};
 
 use itertools::Itertools;
 
 use libm::lgamma;
+
+use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
 #[derive(Default, Clone, Copy)]
 pub struct ForgedRegion {
@@ -32,9 +35,15 @@ fn cosine_table() -> [[f64; 8]; 8] {
 }
 
 fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec<i32> {
+    struct State {
+        zero: Vec<i32>,
+        votes: Vec<i32>,
+    }
     let cosine = cosine_table();
-    let mut zero = vec![0i32; (image.width() * image.height()) as usize];
-    let mut votes = vec![-1i32; (image.width() * image.height()) as usize];
+    let zero = vec![0i32; (image.width() * image.height()) as usize];
+    let votes = vec![-1i32; (image.width() * image.height()) as usize];
+
+    let lock = RwLock::new(State { zero, votes });
 
     let is_const_along_x_or_y = |x, y| {
         // check whether the block is constant along x or y axis
@@ -65,9 +74,8 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
         along_x() || along_y()
     };
 
-    (0..image.width() - 7)
-        .cartesian_product(0..image.height() - 7)
-        .for_each(|(x, y)| {
+    (0..image.width() - 7).into_par_iter().for_each(|x| {
+        for y in 0..image.height() - 7 {
             // compute DCT for 8x8 blocks staring at x,y and count its zeros
             let vec = image.as_raw();
             let number_of_zeroes = (0..8)
@@ -99,25 +107,32 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
 
             let const_along = is_const_along_x_or_y(x, y);
 
-            // check all pixels in the block and update votes
-            for xx in x..x + 8 {
-                for yy in y..y + 8 {
-                    let index = (xx + yy * image.width()) as usize;
-                    // if two grids are tied in number of zeros, do not vote
-                    if number_of_zeroes == zero[index] {
-                        votes[index] = -1;
-                    } else if number_of_zeroes > zero[index] {
-                        // update votes when the current grid has more zeros
-                        zero[index] = number_of_zeroes;
-                        votes[index] = if const_along {
-                            -1
-                        } else {
-                            ((x % 8) + (y % 8) * 8) as i32
-                        };
+            {
+                let mut state = lock.write().unwrap();
+
+                // check all pixels in the block and update votes
+                for xx in x..x + 8 {
+                    for yy in y..y + 8 {
+                        let index = (xx + yy * image.width()) as usize;
+                        // if two grids are tied in number of zeros, do not vote
+                        if number_of_zeroes == state.zero[index] {
+                            state.votes[index] = -1;
+                        } else if number_of_zeroes > state.zero[index] {
+                            // update votes when the current grid has more zeros
+                            state.zero[index] = number_of_zeroes;
+                            state.votes[index] = if const_along {
+                                -1
+                            } else {
+                                ((x % 8) + (y % 8) * 8) as i32
+                            };
+                        }
                     }
                 }
             }
-        });
+        }
+    });
+
+    let mut votes = lock.into_inner().unwrap().votes;
 
     // set pixels on the border to non valid votes - only pixels that
     // belong to the 64 full 8x8 blocks inside the image can vote
