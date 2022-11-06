@@ -61,24 +61,25 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
             }
 
             // compute DCT for 8x8 blocks staring at x,y and count its zeros
+            let vec = image.as_raw();
             let number_of_zeroes = (0..8)
                 .cartesian_product(0..8)
                 .filter(|(i, j)| *i > 0 || *j > 0)
                 .map(|(i, j)| {
-                    let mut dct_ij: f64 = 0.0;
-
-                    for xx in 0..8 {
-                        for yy in 0..8 {
-                            let pixel = image.get_pixel(x + xx, y + yy).0[0];
-                            dct_ij += pixel
-                                * cosine[xx as usize][i as usize]
-                                * cosine[yy as usize][j as usize];
-                        }
-                    }
-
-                    dct_ij *= 0.25
+                    let normalization = 0.25
                         * (if i == 0 { 1.0 / 2.0f64.sqrt() } else { 1.0 })
                         * (if j == 0 { 1.0 / 2.0f64.sqrt() } else { 1.0 });
+                    let dct_ij = (0..8)
+                        .cartesian_product(0..8)
+                        .map(|(xx, yy)| {
+                            let index = (x + xx + (y + yy) * image.width()) as usize;
+                            let pixel = vec[index];
+                            pixel
+                                * cosine[xx as usize][i as usize]
+                                * cosine[yy as usize][j as usize]
+                        })
+                        .sum::<f64>()
+                        * normalization;
 
                     // the finest quantization in JPEG is to integer values.
                     // in such case, the optimal threshold to decide if a
