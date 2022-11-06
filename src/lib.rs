@@ -105,11 +105,11 @@ impl Zero {
         let (forged_regions, forgery_mask) = detect_forgeries(&votes, width, height, main_grid, 63);
 
         let forgeries = Forgeries {
-            main_grid,
-            lnfa_grids,
-            forged_regions,
-            forgery_mask,
             votes,
+            forgery_mask,
+            forged_regions,
+            lnfa_grids,
+            main_grid,
         };
 
         if main_grid > -1 {
@@ -154,7 +154,7 @@ fn cosine_table() -> [[f64; 8]; 8] {
 }
 
 /// compute DCT for 8x8 blocks staring at x,y and count its zeros
-fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u32, y: u32) -> i32 {
+fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u32, y: u32) -> u32 {
     let vec = image.as_raw();
     (0..8)
         .cartesian_product(0..8)
@@ -177,7 +177,7 @@ fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u3
             // in such case, the optimal threshold to decide if a
             // coefficient is zero or not is the midpoint between
             // 0 and 1, thus 0.5
-            i32::from(dct_ij.abs() < 0.5)
+            u32::from(dct_ij.abs() < 0.5)
         })
         .sum()
 }
@@ -213,11 +213,11 @@ fn is_const_along_x_or_y(image: &LuminanceImage, x: u32, y: u32) -> bool {
 
 fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec<i32> {
     struct State {
-        zero: Vec<i32>,
+        zero: Vec<u32>,
         votes: Vec<i32>,
     }
     let cosine = cosine_table();
-    let zero = vec![0i32; (image.width() * image.height()) as usize];
+    let zero = vec![0u32; (image.width() * image.height()) as usize];
     let votes = vec![-1i32; (image.width() * image.height()) as usize];
 
     let lock = RwLock::new(State { zero, votes });
@@ -234,17 +234,21 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f64>, Vec<f64>>) -> Vec
                 for xx in x..x + 8 {
                     for yy in y..y + 8 {
                         let index = (xx + yy * image.width()) as usize;
-                        // if two grids are tied in number of zeros, do not vote
-                        if number_of_zeroes == state.zero[index] {
-                            state.votes[index] = -1;
-                        } else if number_of_zeroes > state.zero[index] {
-                            // update votes when the current grid has more zeros
-                            state.zero[index] = number_of_zeroes;
-                            state.votes[index] = if const_along {
-                                -1
-                            } else {
-                                ((x % 8) + (y % 8) * 8) as i32
-                            };
+                        match number_of_zeroes.cmp(&state.zero[index]) {
+                            std::cmp::Ordering::Equal => {
+                                // if two grids are tied in number of zeros, do not vote
+                                state.votes[index] = -1;
+                            }
+                            std::cmp::Ordering::Greater => {
+                                // update votes when the current grid has more zeros
+                                state.zero[index] = number_of_zeroes;
+                                state.votes[index] = if const_along {
+                                    -1
+                                } else {
+                                    ((x % 8) + (y % 8) * 8) as i32
+                                };
+                            }
+                            std::cmp::Ordering::Less => (),
                         }
                     }
                 }
@@ -291,7 +295,7 @@ fn log_nfa(n: u32, k: u32, p: f64, log_nt: f64) -> f64 {
     let tolerance = 0.1;
     let p_term = p / (1.0 - p);
 
-    assert!(k <= n && p >= 0.0 && p <= 1.0);
+    debug_assert!(k <= n && (0.0..=1.0).contains(&p));
 
     if n == 0 || k == 0 {
         return log_nt;
@@ -384,7 +388,7 @@ fn detect_global_grids(votes: &[i32], width: u32, height: u32) -> (i32, [f64; 64
     });
 
     // meaningful grid -> main grid found!
-    if most_voted_grid >= 0 && most_voted_grid < 64 && lnfa_grids[most_voted_grid as usize] < 0.0 {
+    if (0..64).contains(&most_voted_grid) && lnfa_grids[most_voted_grid as usize] < 0.0 {
         return (most_voted_grid, lnfa_grids);
     }
 
