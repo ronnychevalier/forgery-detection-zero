@@ -7,7 +7,7 @@ use clap::Parser;
 use image::io::Reader as ImageReader;
 use image::{ImageBuffer, ImageFormat};
 
-use zero_rs::Zero;
+use forgery_detection_zero::Zero;
 
 #[derive(Parser)]
 struct Arguments {
