@@ -1,0 +1,22 @@
+[package]
+name = "zero-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = { version = "0.24", default-features = false, features = ["png", "jpeg", "jpeg_rayon"] }
+itertools = "0.10.5"
+libm = "0.2.5"
+
+[dev-dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[profile.release]
+lto = true
+
+[profile.dev]
+opt-level = 2
+
+[profile.dev.package."*"]
+opt-level = 2
