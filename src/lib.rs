@@ -64,7 +64,7 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f32>, Vec<f32>>) -> Vec
             let number_of_zeroes = (0..8)
                 .cartesian_product(0..8)
                 .filter(|(i, j)| *i > 0 || *j > 0)
-                .fold(0, |number_of_zeroes, (i, j)| {
+                .map(|(i, j)| {
                     let mut dct_ij: f64 = 0.0;
 
                     for xx in 0..8 {
@@ -85,11 +85,12 @@ fn compute_grid_votes_per_pixel(image: &ImageBuffer<Luma<f32>, Vec<f32>>) -> Vec
                     // coefficient is zero or not is the midpoint between
                     // 0 and 1, thus 0.5
                     if dct_ij.abs() < 0.5 {
-                        number_of_zeroes + 1
+                        1
                     } else {
-                        number_of_zeroes
+                        0
                     }
-                });
+                })
+                .sum();
 
             // check all pixels in the block and update votes
             for xx in x..x + 8 {
