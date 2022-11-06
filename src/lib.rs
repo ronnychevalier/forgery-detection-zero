@@ -188,8 +188,10 @@ impl Votes {
 
         (0..image.height() - 7).into_par_iter().for_each(|y| {
             for x in 0..image.width() - 7 {
-                let number_of_zeroes = compute_number_of_zeros(&cosine, image, x, y);
-                let const_along = is_const_along_x_or_y(image, x, y);
+                // SAFETY: The range of the loop makes `x` always less than `image.width() - 7` and `y` always less than `image.height() - 7`.
+                let number_of_zeroes = unsafe { compute_number_of_zeros(&cosine, image, x, y) };
+                // SAFETY: Same argument as above.
+                let const_along = unsafe { is_const_along_x_or_y(image, x, y) };
 
                 {
                     let mut state = lock.write().unwrap();
@@ -198,21 +200,26 @@ impl Votes {
                     for xx in x..x + 8 {
                         for yy in y..y + 8 {
                             let index = (xx + yy * image.width()) as usize;
-                            match number_of_zeroes.cmp(&state.zero[index]) {
-                                std::cmp::Ordering::Equal => {
-                                    // if two grids are tied in number of zeros, do not vote
-                                    state.votes[index] = None;
+                            // SAFETY: The loops iterate within the bounds of the image.
+                            // `state.zero` and `state.votes` have the same size as the image.
+                            // Thus, `index` is always within the bounds of the vec.
+                            unsafe {
+                                match number_of_zeroes.cmp(state.zero.get_unchecked(index)) {
+                                    std::cmp::Ordering::Equal => {
+                                        // if two grids are tied in number of zeros, do not vote
+                                        *state.votes.get_unchecked_mut(index) = None;
+                                    }
+                                    std::cmp::Ordering::Greater => {
+                                        // update votes when the current grid has more zeros
+                                        *state.zero.get_unchecked_mut(index) = number_of_zeroes;
+                                        *state.votes.get_unchecked_mut(index) = if const_along {
+                                            None
+                                        } else {
+                                            Some(((x % 8) + (y % 8) * 8) as u8)
+                                        };
+                                    }
+                                    std::cmp::Ordering::Less => (),
                                 }
-                                std::cmp::Ordering::Greater => {
-                                    // update votes when the current grid has more zeros
-                                    state.zero[index] = number_of_zeroes;
-                                    state.votes[index] = if const_along {
-                                        None
-                                    } else {
-                                        Some(((x % 8) + (y % 8) * 8) as u8)
-                                    };
-                                }
-                                std::cmp::Ordering::Less => (),
                             }
                         }
                     }
@@ -456,8 +463,17 @@ fn cosine_table() -> [[f64; 8]; 8] {
     cosine
 }
 
-/// compute DCT for 8x8 blocks staring at x,y and count its zeros
-fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u32, y: u32) -> u32 {
+/// Computes DCT for 8x8 blocks staring at x,y and count its zeros
+///
+/// # Safety
+///
+/// `x` must be less than `image.width() - 7` and `y` must be less than `image.height() - 7`.
+unsafe fn compute_number_of_zeros(
+    cosine: &[[f64; 8]; 8],
+    image: &LuminanceImage,
+    x: u32,
+    y: u32,
+) -> u32 {
     let vec = image.as_raw();
     (0..8)
         .cartesian_product(0..8)
@@ -470,8 +486,7 @@ fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u3
                 .cartesian_product(0..8)
                 .map(|(xx, yy)| {
                     let index = (x + xx + (y + yy) * image.width()) as usize;
-                    // coordinates are within bounds
-                    let pixel = unsafe { vec.get_unchecked(index) };
+                    let pixel = vec.get_unchecked(index);
                     pixel * cosine[xx as usize][i as usize] * cosine[yy as usize][j as usize]
                 })
                 .sum::<f64>()
@@ -485,13 +500,17 @@ fn compute_number_of_zeros(cosine: &[[f64; 8]; 8], image: &LuminanceImage, x: u3
         .sum()
 }
 
-/// check whether the block is constant along x or y axis
-fn is_const_along_x_or_y(image: &LuminanceImage, x: u32, y: u32) -> bool {
+/// Checks whether the block is constant along x or y axis
+///
+/// # Safety
+///
+/// `x` must be less than `image.width() - 7` and `y` must be less than `image.height() - 7`.
+unsafe fn is_const_along_x_or_y(image: &LuminanceImage, x: u32, y: u32) -> bool {
     let along_y = || {
         for yy in 0..8 {
-            let v1 = image.get_pixel(x, y + yy);
+            let v1 = image.unsafe_get_pixel(x, y + yy);
             for xx in 1..8 {
-                let v2 = image.get_pixel(x + xx, y + yy);
+                let v2 = image.unsafe_get_pixel(x + xx, y + yy);
                 if v1 != v2 {
                     return false;
                 }
@@ -501,9 +520,9 @@ fn is_const_along_x_or_y(image: &LuminanceImage, x: u32, y: u32) -> bool {
     };
     let along_x = || {
         for xx in 0..8 {
-            let v1 = image.get_pixel(x + xx, y);
+            let v1 = image.unsafe_get_pixel(x + xx, y);
             for yy in 1..8 {
-                let v2 = image.get_pixel(x + xx, y + yy);
+                let v2 = image.unsafe_get_pixel(x + xx, y + yy);
                 if v1 != v2 {
                     return false;
                 }
