@@ -34,7 +34,7 @@ pub struct Grid(pub u8);
 
 impl Grid {
     pub fn from_xy(x: u8, y: u8) -> Self {
-        Self(((x % 8) + (y % 8) * 8) as u8)
+        Self((x + y * 8) as u8)
     }
     pub fn x(&self) -> u8 {
         self.0 % 8
@@ -237,7 +237,7 @@ impl Votes {
                                         *state.votes.get_unchecked_mut(index) = if const_along {
                                             None
                                         } else {
-                                            Some(Grid::from_xy(x as u8, y as u8))
+                                            Some(Grid::from_xy((x % 8) as u8, (y % 8) as u8))
                                         };
                                     }
                                     std::cmp::Ordering::Less => (),
