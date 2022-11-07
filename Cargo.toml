@@ -7,6 +7,7 @@ edition = "2021"
 rust-version = "1.63"
 categories = ["multimedia::images"]
 keywords = ["forgery detection", "image processing"]
+readme = "README.md"
 
 [features]
 default = ["rayon"]

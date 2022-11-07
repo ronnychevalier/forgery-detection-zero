@@ -1,7 +1,5 @@
-/// An attempt to reimplement [ZERO](https://github.com/tinankh/ZERO) in Rust.
-///
-/// At the moment, it is a C-like Rust implementation very close to the original C implementation.
-/// It is in the process of being refactored to be more idiomatic.
+#![doc = include_str!("../README.md")]
+
 use std::f64::consts::{LN_10, PI};
 use std::ops::{Index, IndexMut};
 use std::sync::RwLock;
