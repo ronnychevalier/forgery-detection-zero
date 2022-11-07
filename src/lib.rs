@@ -28,13 +28,29 @@ pub enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
+/// A grid is an unsigned integer between `0` and `63`
+#[derive(Default, Clone, Copy, PartialEq)]
+pub struct Grid(pub u8);
+
+impl Grid {
+    pub fn from_xy(x: u8, y: u8) -> Self {
+        Self(((x % 8) + (y % 8) * 8) as u8)
+    }
+    pub fn x(&self) -> u8 {
+        self.0 % 8
+    }
+    pub fn y(&self) -> u8 {
+        self.0 / 8
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct ForgedRegion {
     pub x0: u32,
     pub y0: u32,
     pub x1: u32,
     pub y1: u32,
-    pub grid: u8,
+    pub grid: Grid,
     pub lnfa: f64,
 }
 
@@ -43,7 +59,7 @@ pub struct Forgeries {
     forgery_mask: Vec<i32>,
     forged_regions: Vec<ForgedRegion>,
     lnfa_grids: [f64; 64],
-    main_grid: Option<u8>,
+    main_grid: Option<Grid>,
 }
 
 impl Forgeries {
@@ -63,7 +79,7 @@ impl Forgeries {
         self.lnfa_grids
     }
 
-    pub fn main_grid(&self) -> Option<u8> {
+    pub fn main_grid(&self) -> Option<Grid> {
         self.main_grid
     }
 }
@@ -106,7 +122,7 @@ impl Zero {
 
         let votes = Votes::from_luminance(&self.luminance);
         let (main_grid, lnfa_grids) = votes.detect_global_grids();
-        let (forged_regions, forgery_mask) = votes.detect_forgeries(main_grid, 63);
+        let (forged_regions, forgery_mask) = votes.detect_forgeries(main_grid, Grid(63));
 
         let forgeries = Forgeries {
             votes,
@@ -133,7 +149,7 @@ impl Zero {
                 // and we are interested only in grid with origin (0,0), so:
                 // grid_to_exclude = None and grid_max = 0
                 let (jpeg_99_forged_regions, jpeg_99_forgery_mask) =
-                    jpeg_99_votes.detect_forgeries(None, 0);
+                    jpeg_99_votes.detect_forgeries(None, Grid(0));
 
                 return (
                     forgeries,
@@ -148,7 +164,7 @@ impl Zero {
 
 pub struct Votes {
     /// A vote is an unsigned integer between `0` and `63`
-    votes: Box<[Option<u8>]>,
+    votes: Box<[Option<Grid>]>,
 
     width: u32,
     height: u32,
@@ -156,7 +172,7 @@ pub struct Votes {
 }
 
 impl Index<usize> for Votes {
-    type Output = Option<u8>;
+    type Output = Option<Grid>;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.votes[index]
@@ -164,7 +180,7 @@ impl Index<usize> for Votes {
 }
 
 impl Index<[u32; 2]> for Votes {
-    type Output = Option<u8>;
+    type Output = Option<Grid>;
 
     fn index(&self, xy: [u32; 2]) -> &Self::Output {
         &self.votes[(xy[0] + xy[1] * self.width) as usize]
@@ -181,7 +197,7 @@ impl Votes {
     fn from_luminance(image: &LuminanceImage) -> Self {
         struct State {
             zero: Vec<u32>,
-            votes: Vec<Option<u8>>,
+            votes: Vec<Option<Grid>>,
         }
         let cosine = cosine_table();
         let zero = vec![0u32; (image.width() * image.height()) as usize];
@@ -221,7 +237,7 @@ impl Votes {
                                         *state.votes.get_unchecked_mut(index) = if const_along {
                                             None
                                         } else {
-                                            Some(((x % 8) + (y % 8) * 8) as u8)
+                                            Some(Grid::from_xy(x as u8, y as u8))
                                         };
                                     }
                                     std::cmp::Ordering::Less => (),
@@ -269,7 +285,7 @@ impl Votes {
         }
     }
 
-    fn detect_global_grids(&self) -> (Option<u8>, [f64; 64]) {
+    fn detect_global_grids(&self) -> (Option<Grid>, [f64; 64]) {
         let mut grid_votes = [0; 64];
         let mut max_votes = 0;
         let mut most_voted_grid = None;
@@ -279,11 +295,11 @@ impl Votes {
         for x in 0..self.width {
             for y in 0..self.height {
                 if let Some(grid) = self[[x, y]] {
-                    grid_votes[grid as usize] += 1;
+                    grid_votes[grid.0 as usize] += 1;
 
                     // keep track of maximum of votes and the associated grid
-                    if grid_votes[grid as usize] > max_votes {
-                        max_votes = grid_votes[grid as usize];
+                    if grid_votes[grid.0 as usize] > max_votes {
+                        max_votes = grid_votes[grid.0 as usize];
                         most_voted_grid = Some(grid);
                     }
                 }
@@ -302,7 +318,7 @@ impl Votes {
 
         // meaningful grid -> main grid found!
         if let Some(most_voted_grid) = most_voted_grid {
-            if lnfa_grids[most_voted_grid as usize] < 0.0 {
+            if lnfa_grids[most_voted_grid.0 as usize] < 0.0 {
                 return (Some(most_voted_grid), lnfa_grids);
             }
         }
@@ -313,8 +329,8 @@ impl Votes {
     /// Detects zones which are inconsistent with a given grid
     fn detect_forgeries(
         &self,
-        grid_to_exclude: Option<u8>,
-        grid_max: u8,
+        grid_to_exclude: Option<Grid>,
+        grid_max: Grid,
     ) -> (Vec<ForgedRegion>, Vec<i32>) {
         let p = 1.0 / 64.0;
 
@@ -351,7 +367,7 @@ impl Votes {
                 } else {
                     continue;
                 };
-                if grid > grid_max {
+                if grid.0 > grid_max.0 {
                     continue;
                 }
 

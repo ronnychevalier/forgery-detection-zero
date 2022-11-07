@@ -8,7 +8,7 @@ use clap::Parser;
 use image::io::Reader as ImageReader;
 use image::{ImageBuffer, ImageFormat};
 
-use forgery_detection_zero::Zero;
+use forgery_detection_zero::{Grid, Zero};
 
 /// Detects JPEG grids and forgeries
 #[derive(Parser)]
@@ -47,10 +47,10 @@ fn main() -> anyhow::Result<()> {
     if let Some(main_grid) = forgeries.main_grid() {
         println!(
             "main grid found: #{} ({},{}) log(nfa) = {}\n",
-            main_grid,
-            main_grid % 8,
-            main_grid / 8,
-            forgeries.lnfa_grids()[main_grid as usize]
+            main_grid.0,
+            main_grid.x(),
+            main_grid.y(),
+            forgeries.lnfa_grids()[main_grid.0 as usize]
         );
         global_grids += 1;
     } else {
@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
         if value < 0.0
             && forgeries
                 .main_grid()
-                .map_or(true, |grid| grid as usize != i)
+                .map_or(true, |grid| grid.0 as usize != i)
         {
             println!(
                 "meaningful global grid found: #{i} ({},{}) log(nfa) = {value}\n",
@@ -89,9 +89,9 @@ fn main() -> anyhow::Result<()> {
         );
         print!(
             " grid: #{} ({},{})",
-            forged_region.grid,
-            forged_region.grid % 8,
-            forged_region.grid / 8
+            forged_region.grid.0,
+            forged_region.grid.x(),
+            forged_region.grid.y(),
         );
 
         println!(" log(nfa) = {}", forged_region.lnfa);
@@ -99,7 +99,7 @@ fn main() -> anyhow::Result<()> {
 
     let votes = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
         let value = if let Some(value) = forgeries.votes()[[x, y]] {
-            value as u8
+            value.0
         } else {
             255
         };
@@ -129,9 +129,9 @@ fn main() -> anyhow::Result<()> {
                 );
                 print!(
                     " grid: #{} ({},{})",
-                    missing_region.grid,
-                    missing_region.grid % 8,
-                    missing_region.grid / 8
+                    missing_region.grid.0,
+                    missing_region.grid.x(),
+                    missing_region.grid.y(),
                 );
 
                 println!(" log(nfa) = {}", missing_region.lnfa);
@@ -140,7 +140,7 @@ fn main() -> anyhow::Result<()> {
 
         let votes = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
             let value = if let Some(value) = jpeg_99_votes[[x, y]] {
-                value as u8
+                value.0
             } else {
                 255
             };
@@ -160,11 +160,11 @@ fn main() -> anyhow::Result<()> {
     let number_of_regions =
         forgeries.forged_regions().len() + jpeg_99.map_or(0, |jpeg_99| jpeg_99.0.len());
 
-    if number_of_regions == 0 && forgeries.main_grid().unwrap_or(0) < 1 {
+    if number_of_regions == 0 && forgeries.main_grid().unwrap_or(Grid(0)).0 < 1 {
         println!("\nNo suspicious traces found in the image with the performed analysis.");
     }
 
-    if forgeries.main_grid().unwrap_or(0) > 0 {
+    if forgeries.main_grid().unwrap_or(Grid(0)).0 > 0 {
         println!("\nThe most meaningful JPEG grid origin is not (0,0).");
         println!("This may indicate that the image has been cropped.");
     }
