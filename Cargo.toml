@@ -8,11 +8,15 @@ rust-version = "1.63"
 categories = ["multimedia::images"]
 keywords = ["forgery detection", "image processing"]
 
+[features]
+default = ["rayon"]
+rayon = ["dep:rayon"]
+
 [dependencies]
 image = { version = "0.24" }
 itertools = "0.10"
 libm = "0.2.5"
-rayon = "1.5"
+rayon = { version = "1.5", optional = true }
 thiserror = "1"
 
 [dev-dependencies]

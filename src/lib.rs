@@ -12,6 +12,7 @@ use itertools::Itertools;
 
 use libm::lgamma;
 
+#[cfg(feature = "rayon")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
 mod convert;
@@ -188,7 +189,10 @@ impl Votes {
 
         let lock = RwLock::new(State { zero, votes });
 
-        (0..image.height() - 7).into_par_iter().for_each(|y| {
+        let iter = 0..image.height() - 7;
+        #[cfg(feature = "rayon")]
+        let iter = iter.into_par_iter();
+        iter.for_each(|y| {
             for x in 0..image.width() - 7 {
                 // SAFETY: The range of the loop makes `x` always less than `image.width() - 7` and `y` always less than `image.height() - 7`.
                 let number_of_zeroes = unsafe { compute_number_of_zeros(&cosine, image, x, y) };
