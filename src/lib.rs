@@ -84,7 +84,9 @@ impl Zero {
     }
 
     pub fn with_jpeg_99<'a>(mut self, image: impl Into<Option<&'a DynamicImage>>) -> Result<Self> {
-        let Some(image) = image.into() else {
+        let image = if let Some(image) = image.into() {
+            image
+        } else {
             return Ok(self);
         };
 
@@ -340,7 +342,9 @@ impl Votes {
                 if self[index] == grid_to_exclude {
                     continue;
                 }
-                let Some(grid) = self[index] else {
+                let grid = if let Some(grid) = self[index] {
+                    grid
+                } else {
                     continue;
                 };
                 if grid > grid_max {
