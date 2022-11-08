@@ -56,7 +56,7 @@ pub struct ForgedRegion {
 
 pub struct ForeignGridAreas {
     votes: Votes,
-    forgery_mask: Vec<i32>,
+    forgery_mask: Vec<u8>,
     forged_regions: Vec<ForgedRegion>,
     lnfa_grids: [f64; 64],
     main_grid: Option<Grid>,
@@ -67,7 +67,7 @@ impl ForeignGridAreas {
         &self.votes
     }
 
-    pub fn forgery_mask(&self) -> &[i32] {
+    pub fn forgery_mask(&self) -> &[u8] {
         self.forgery_mask.as_ref()
     }
 
@@ -98,7 +98,7 @@ pub struct MissingGridAreas {
 
     missing_regions: Vec<ForgedRegion>,
 
-    forgery_mask: Vec<i32>,
+    forgery_mask: Vec<u8>,
 }
 
 impl MissingGridAreas {
@@ -111,7 +111,7 @@ impl MissingGridAreas {
         self.missing_regions.as_ref()
     }
 
-    pub fn forgery_mask(&self) -> &[i32] {
+    pub fn forgery_mask(&self) -> &[u8] {
         self.forgery_mask.as_ref()
     }
 }
@@ -369,7 +369,7 @@ impl Votes {
         &self,
         grid_to_exclude: Option<Grid>,
         grid_max: Grid,
-    ) -> (Vec<ForgedRegion>, Vec<i32>) {
+    ) -> (Vec<ForgedRegion>, Vec<u8>) {
         let p = 1.0 / 64.0;
 
         // Distance to look for neighbors in the region growing process.
@@ -382,10 +382,10 @@ impl Votes {
         // minimal block size that can lead to a meaningful detection
         let min_size = (64.0 * self.log_nt / 64.0f64.log10()).ceil() as usize;
 
-        let mut mask_aux = vec![0; self.votes.len()];
+        let mut mask_aux = vec![0u8; self.votes.len()];
         let mut used = vec![false; self.votes.len()];
 
-        let mut forgery_mask = vec![0; self.votes.len()];
+        let mut forgery_mask = vec![0u8; self.votes.len()];
         let mut forgery_mask_reg = vec![0; self.votes.len()];
 
         let mut forged_regions = Vec::new();
