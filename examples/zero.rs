@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     let mut global_grids = 0;
 
     let (forgeries, jpeg_99) = Zero::from_image(&jpeg)
-        .with_jpeg_99(&jpeg_99)
+        .with_missing_grids_detection(&jpeg_99)
         .context("The images should have the same dimension")?
         .detect_forgeries();
     if let Some(main_grid) = forgeries.main_grid() {
@@ -114,9 +114,9 @@ fn main() -> anyhow::Result<()> {
     });
     forgery_mask.save("mask_f.png")?;
 
-    if let Some((missing_regions, jpeg_99_forgery_mask, jpeg_99_votes)) = &jpeg_99 {
+    if let Some(missing_grid_areas) = &jpeg_99 {
         if forgeries.main_grid().is_some() {
-            for missing_region in missing_regions {
+            for missing_region in missing_grid_areas.missing_regions() {
                 println!("\nA region with missing JPEG grid was found here:");
                 print!(
                     "bounding box: {} {} to {} {} [{}x{}]",
@@ -139,7 +139,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         let votes = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
-            let value = if let Some(value) = jpeg_99_votes[[x, y]] {
+            let value = if let Some(value) = missing_grid_areas.votes()[[x, y]] {
                 value.0
             } else {
                 255
@@ -152,13 +152,15 @@ fn main() -> anyhow::Result<()> {
         let forgery_mask = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
             let index = (x + y * jpeg.width()) as usize;
 
-            image::Luma([jpeg_99_forgery_mask[index] as u8])
+            image::Luma([missing_grid_areas.forgery_mask()[index] as u8])
         });
         forgery_mask.save("mask_m.png")?;
     }
 
-    let number_of_regions =
-        forgeries.forged_regions().len() + jpeg_99.map_or(0, |jpeg_99| jpeg_99.0.len());
+    let number_of_regions = forgeries.forged_regions().len()
+        + jpeg_99.map_or(0, |missing_grid_areas| {
+            missing_grid_areas.missing_regions().len()
+        });
 
     if number_of_regions == 0 && forgeries.main_grid().unwrap_or(Grid(0)).0 < 1 {
         println!("\nNo suspicious traces found in the image with the performed analysis.");

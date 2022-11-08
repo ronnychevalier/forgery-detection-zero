@@ -27,22 +27,24 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 /// A grid is an unsigned integer between `0` and `63`
-#[derive(Default, Clone, Copy, PartialEq)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Grid(pub u8);
 
 impl Grid {
-    pub fn from_xy(x: u8, y: u8) -> Self {
-        Self((x + y * 8) as u8)
+    const fn from_xy(x: u32, y: u32) -> Self {
+        Self(((x % 8) + (y % 8) * 8) as u8)
     }
-    pub fn x(&self) -> u8 {
+
+    pub const fn x(&self) -> u8 {
         self.0 % 8
     }
-    pub fn y(&self) -> u8 {
+
+    pub const fn y(&self) -> u8 {
         self.0 / 8
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, Debug)]
 pub struct ForgedRegion {
     pub x0: u32,
     pub y0: u32,
@@ -52,7 +54,7 @@ pub struct ForgedRegion {
     pub lnfa: f64,
 }
 
-pub struct Forgeries {
+pub struct ForeignGridAreas {
     votes: Votes,
     forgery_mask: Vec<i32>,
     forged_regions: Vec<ForgedRegion>,
@@ -60,7 +62,7 @@ pub struct Forgeries {
     main_grid: Option<Grid>,
 }
 
-impl Forgeries {
+impl ForeignGridAreas {
     pub fn votes(&self) -> &Votes {
         &self.votes
     }
@@ -69,6 +71,7 @@ impl Forgeries {
         self.forgery_mask.as_ref()
     }
 
+    /// Get all the parts of the image where a JPEG grid is detected with its grid origin different from the main JPEG grid
     pub fn forged_regions(&self) -> &[ForgedRegion] {
         self.forged_regions.as_ref()
     }
@@ -79,6 +82,29 @@ impl Forgeries {
 
     pub fn main_grid(&self) -> Option<Grid> {
         self.main_grid
+    }
+}
+
+pub struct MissingGridAreas {
+    votes: Votes,
+
+    missing_regions: Vec<ForgedRegion>,
+
+    forgery_mask: Vec<i32>,
+}
+
+impl MissingGridAreas {
+    pub fn votes(&self) -> &Votes {
+        &self.votes
+    }
+
+    /// Get all the parts of the image that have missing JPEG traces
+    pub fn missing_regions(&self) -> &[ForgedRegion] {
+        self.missing_regions.as_ref()
+    }
+
+    pub fn forgery_mask(&self) -> &[i32] {
+        self.forgery_mask.as_ref()
     }
 }
 
@@ -98,8 +124,11 @@ impl Zero {
         }
     }
 
-    pub fn with_jpeg_99<'a>(mut self, image: impl Into<Option<&'a DynamicImage>>) -> Result<Self> {
-        let image = if let Some(image) = image.into() {
+    pub fn with_missing_grids_detection<'a>(
+        mut self,
+        jpeg_99: impl Into<Option<&'a DynamicImage>>,
+    ) -> Result<Self> {
+        let image = if let Some(image) = jpeg_99.into() {
             image
         } else {
             return Ok(self);
@@ -113,7 +142,7 @@ impl Zero {
         Ok(self)
     }
 
-    pub fn detect_forgeries(self) -> (Forgeries, Option<(Vec<ForgedRegion>, Vec<i32>, Votes)>) {
+    pub fn detect_forgeries(self) -> (ForeignGridAreas, Option<MissingGridAreas>) {
         // The API ensures that both `self.luminance` and `self.jpeg_99` have the same dimensions.
         let width = self.luminance.width();
         let height = self.luminance.height();
@@ -122,7 +151,7 @@ impl Zero {
         let (main_grid, lnfa_grids) = votes.detect_global_grids();
         let (forged_regions, forgery_mask) = votes.detect_forgeries(main_grid, Grid(63));
 
-        let forgeries = Forgeries {
+        let forgeries = ForeignGridAreas {
             votes,
             forgery_mask,
             forged_regions,
@@ -143,16 +172,19 @@ impl Zero {
                     }
                 }
 
-                // Try to detect an imposed JPEG grid.  No grid is to be excluded
+                // Try to detect an imposed JPEG grid. No grid is to be excluded
                 // and we are interested only in grid with origin (0,0), so:
                 // grid_to_exclude = None and grid_max = 0
                 let (jpeg_99_forged_regions, jpeg_99_forgery_mask) =
                     jpeg_99_votes.detect_forgeries(None, Grid(0));
 
-                return (
-                    forgeries,
-                    Some((jpeg_99_forged_regions, jpeg_99_forgery_mask, jpeg_99_votes)),
-                );
+                let missing_grid_areas = MissingGridAreas {
+                    votes: jpeg_99_votes,
+                    missing_regions: jpeg_99_forged_regions,
+                    forgery_mask: jpeg_99_forgery_mask,
+                };
+
+                return (forgeries, Some(missing_grid_areas));
             }
         }
 
@@ -235,7 +267,7 @@ impl Votes {
                                         *state.votes.get_unchecked_mut(index) = if const_along {
                                             None
                                         } else {
-                                            Some(Grid::from_xy((x % 8) as u8, (y % 8) as u8))
+                                            Some(Grid::from_xy(x, y))
                                         };
                                     }
                                     std::cmp::Ordering::Less => (),
@@ -570,9 +602,7 @@ fn log_nfa(n: u32, k: u32, p: f64, log_nt: f64) -> f64 {
 
     if n == 0 || k == 0 {
         return log_nt;
-    }
-
-    if n == k {
+    } else if n == k {
         return f64::from(n).mul_add(p.log10(), log_nt);
     }
 
