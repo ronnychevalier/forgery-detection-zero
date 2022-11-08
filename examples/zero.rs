@@ -166,7 +166,7 @@ fn main() -> anyhow::Result<()> {
         println!("\nNo suspicious traces found in the image with the performed analysis.");
     }
 
-    if forgeries.main_grid().unwrap_or(Grid(0)).0 > 0 {
+    if forgeries.is_cropped() {
         println!("\nThe most meaningful JPEG grid origin is not (0,0).");
         println!("This may indicate that the image has been cropped.");
     }

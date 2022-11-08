@@ -83,6 +83,14 @@ impl ForeignGridAreas {
     pub fn main_grid(&self) -> Option<Grid> {
         self.main_grid
     }
+
+    /// Whether it is likely that the image has been cropped.
+    ///
+    /// If the origin of the main grid is different from `(0, 0)`,
+    /// it is likely that the image has been cropped.
+    pub fn is_cropped(&self) -> bool {
+        self.main_grid.map_or(false, |grid| grid.0 > 0)
+    }
 }
 
 pub struct MissingGridAreas {
