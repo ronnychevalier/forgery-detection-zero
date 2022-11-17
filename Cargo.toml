@@ -7,7 +7,7 @@ repository = "https://github.com/ronnychevalier/forgery-detection-zero"
 edition = "2021"
 rust-version = "1.63"
 categories = ["multimedia::images", "science"]
-keywords = ["forgery detection", "image processing"]
+keywords = ["forgery-detection", "image-processing"]
 readme = "README.md"
 
 [features]
