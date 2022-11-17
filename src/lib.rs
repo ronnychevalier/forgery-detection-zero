@@ -132,6 +132,11 @@ impl Zero {
         }
     }
 
+    /// Enables the missing grids detection with the given image that represents the same image but compressed with a 99% quality.
+    ///
+    /// # Errors
+    ///
+    /// It returns a error if the given image does not have the same dimension as the original image.
     pub fn with_missing_grids_detection<'a>(
         mut self,
         jpeg_99: impl Into<Option<&'a DynamicImage>>,
@@ -324,25 +329,16 @@ impl Votes {
     }
 
     fn detect_global_grids(&self) -> (Option<Grid>, [f64; 64]) {
-        let mut grid_votes = [0; 64];
-        let mut max_votes = 0;
-        let mut most_voted_grid = None;
+        let mut grid_votes = [0u32; 64];
         let p = 1.0 / 64.0;
 
         // count votes per possible grid origin
-        for x in 0..self.width {
-            for y in 0..self.height {
-                if let Some(grid) = self[[x, y]] {
-                    grid_votes[grid.0 as usize] += 1;
-
-                    // keep track of maximum of votes and the associated grid
-                    if grid_votes[grid.0 as usize] > max_votes {
-                        max_votes = grid_votes[grid.0 as usize];
-                        most_voted_grid = Some(grid);
-                    }
-                }
-            }
-        }
+        // and keep track of the grid with the maximum of votes
+        let most_voted_grid = self.votes.iter().flatten().max_by_key(|grid| {
+            let votes = &mut grid_votes[grid.0 as usize];
+            *votes += 1;
+            *votes
+        });
 
         // compute the NFA value for all the significant grids.  votes are
         // correlated by irregular 8x8 blocks dividing by 64 gives a rough
@@ -357,7 +353,7 @@ impl Votes {
         // meaningful grid -> main grid found!
         if let Some(most_voted_grid) = most_voted_grid {
             if lnfa_grids[most_voted_grid.0 as usize] < 0.0 {
-                return (Some(most_voted_grid), lnfa_grids);
+                return (Some(*most_voted_grid), lnfa_grids);
             }
         }
 
