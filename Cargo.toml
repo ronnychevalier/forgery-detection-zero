@@ -5,7 +5,7 @@ description = "JPEG grid detector applied to forgery detection in digital images
 license = "AGPL-3.0-or-later"
 edition = "2021"
 rust-version = "1.63"
-categories = ["multimedia::images"]
+categories = ["multimedia::images", "science"]
 keywords = ["forgery detection", "image processing"]
 readme = "README.md"
 
@@ -28,7 +28,4 @@ clap = { version = "4", features = ["derive"] }
 lto = true
 
 [profile.dev]
-opt-level = 2
-
-[profile.dev.package."*"]
 opt-level = 2

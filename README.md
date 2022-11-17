@@ -14,3 +14,18 @@ This library is based on the [original implementation written in C](https://gith
 
 At the moment, it is a C-like Rust implementation very close to the original implementation.
 It is in the process of being refactored to be more idiomatic.
+
+## CLI example
+
+Let's say you have an image called `image.jpg`.
+First, convert this image to a 99% quality JPEG using imagemagick `convert` tool:
+
+```shell
+convert  -quality 99% image.jpg image_99.jpg
+```
+
+Then you can use the example to generate the forgery masks:
+
+```shell
+cargo r --release --example zero image.jpg image_99.jpg
+```
