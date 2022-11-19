@@ -16,6 +16,7 @@ default = ["rayon"]
 rayon = ["dep:rayon"]
 
 [dependencies]
+bitvec = { version = "1", default-features = false, features = ["alloc"] }
 image = { version = "0.24" }
 itertools = "0.10"
 libm = "0.2.5"

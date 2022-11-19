@@ -4,6 +4,8 @@ use std::f64::consts::{LN_10, PI};
 use std::ops::{Index, IndexMut};
 use std::sync::Mutex;
 
+use bitvec::bitvec;
+
 use image::{DynamicImage, GenericImageView};
 
 use itertools::Itertools;
@@ -378,10 +380,10 @@ impl Votes {
         // minimal block size that can lead to a meaningful detection
         let min_size = (64.0 * self.log_nt / 64.0f64.log10()).ceil() as usize;
 
-        let mut mask_aux = vec![0u8; self.votes.len()];
-        let mut used = vec![false; self.votes.len()];
+        let mut mask_aux = bitvec![0; self.votes.len()];
+        let mut used = bitvec![0; self.votes.len()];
 
-        let mut forgery_mask = vec![0u8; self.votes.len()];
+        let mut forgery_mask = bitvec![0; self.votes.len()];
         let mut forgery_mask_reg = vec![0; self.votes.len()];
 
         let mut forged_regions = Vec::new();
@@ -410,7 +412,7 @@ impl Votes {
                 let mut x1 = x;
                 let mut y1 = y;
 
-                used[index] = true;
+                used.set(index, true);
 
                 let mut regions_xy = vec![(x, y)];
 
@@ -431,7 +433,7 @@ impl Votes {
                                 continue;
                             }
 
-                            used[index] = true;
+                            used.set(index, true);
                             regions_xy.push((xx, yy));
                             if xx < x0 {
                                 x0 = xx;
@@ -469,7 +471,7 @@ impl Votes {
                         // mark points of the region in the forgery mask
                         for (reg_x, reg_y) in &regions_xy {
                             let index = reg_x + reg_y * self.width;
-                            forgery_mask[index as usize] = 255;
+                            forgery_mask.set(index as usize, true);
                         }
                     }
                 }
@@ -480,11 +482,11 @@ impl Votes {
         for x in w..(self.width - w) {
             for y in w..(self.height - w) {
                 let index = (x + y * self.width) as usize;
-                if forgery_mask[index] != 0 {
+                if forgery_mask[index] {
                     for xx in (x - w)..=(x + w) {
                         for yy in (y - w)..=(y + w) {
                             let index = (xx + yy * self.width) as usize;
-                            mask_aux[index] = 255;
+                            mask_aux.set(index, true);
                             forgery_mask_reg[index] = 255;
                         }
                     }
@@ -495,7 +497,7 @@ impl Votes {
         for x in w..(self.width - w) {
             for y in w..(self.height - w) {
                 let index = (x + y * self.width) as usize;
-                if mask_aux[index] == 0 {
+                if !mask_aux[index] {
                     for xx in (x - w)..=(x + w) {
                         for yy in (y - w)..=(y + w) {
                             let index = (xx + yy * self.width) as usize;
