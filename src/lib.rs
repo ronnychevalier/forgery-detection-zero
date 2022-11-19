@@ -56,8 +56,8 @@ pub struct ForgedRegion {
 
 pub struct ForeignGridAreas {
     votes: Votes,
-    forgery_mask: Vec<u8>,
-    forged_regions: Vec<ForgedRegion>,
+    forgery_mask: Box<[u8]>,
+    forged_regions: Box<[ForgedRegion]>,
     lnfa_grids: [f64; 64],
     main_grid: Option<Grid>,
 }
@@ -96,9 +96,9 @@ impl ForeignGridAreas {
 pub struct MissingGridAreas {
     votes: Votes,
 
-    missing_regions: Vec<ForgedRegion>,
+    missing_regions: Box<[ForgedRegion]>,
 
-    forgery_mask: Vec<u8>,
+    forgery_mask: Box<[u8]>,
 }
 
 impl MissingGridAreas {
@@ -365,7 +365,7 @@ impl Votes {
         &self,
         grid_to_exclude: Option<Grid>,
         grid_max: Grid,
-    ) -> (Vec<ForgedRegion>, Vec<u8>) {
+    ) -> (Box<[ForgedRegion]>, Box<[u8]>) {
         let p = 1.0 / 64.0;
 
         // Distance to look for neighbors in the region growing process.
@@ -506,7 +506,10 @@ impl Votes {
             }
         }
 
-        (forged_regions, forgery_mask_reg)
+        (
+            forged_regions.into_boxed_slice(),
+            forgery_mask_reg.into_boxed_slice(),
+        )
     }
 }
 
