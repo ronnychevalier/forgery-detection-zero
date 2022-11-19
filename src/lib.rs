@@ -2,7 +2,7 @@
 
 use std::f64::consts::{LN_10, PI};
 use std::ops::{Index, IndexMut};
-use std::sync::RwLock;
+use std::sync::Mutex;
 
 use image::{DynamicImage, GenericImageView};
 
@@ -246,7 +246,7 @@ impl Votes {
         let zero = vec![0u32; (image.width() * image.height()) as usize];
         let votes = vec![None; (image.width() * image.height()) as usize];
 
-        let lock = RwLock::new(State { zero, votes });
+        let lock = Mutex::new(State { zero, votes });
 
         let iter = 0..image.height() - 7;
         #[cfg(feature = "rayon")]
@@ -259,7 +259,7 @@ impl Votes {
                 let const_along = unsafe { is_const_along_x_or_y(image, x, y) };
 
                 {
-                    let mut state = lock.write().unwrap();
+                    let mut state = lock.lock().unwrap();
 
                     // check all pixels in the block and update votes
                     for xx in x..x + 8 {
