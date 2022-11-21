@@ -6,7 +6,9 @@ use std::sync::Mutex;
 
 use bitvec::bitvec;
 
-use image::{DynamicImage, GenericImageView};
+use bitvec::vec::BitVec;
+
+use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 
 use itertools::Itertools;
 
@@ -19,9 +21,10 @@ mod convert;
 
 use convert::{LuminanceImage, ToLumaZero};
 
-/// Represents the error that can be raised when using [`Zero`].
+/// Represents the errors that can be raised when using [`Zero`].
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    /// The image and its 99% JPEG quality equivalent have different dimensions
     #[error("image and jpeg99 have different dimensions")]
     DifferentDimensions,
 }
@@ -46,7 +49,7 @@ impl Grid {
     }
 }
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct ForgedRegion {
     pub x0: u32,
     pub y0: u32,
@@ -54,11 +57,11 @@ pub struct ForgedRegion {
     pub y1: u32,
     pub grid: Grid,
     pub lnfa: f64,
+    regions_xy: Box<[(u32, u32)]>,
 }
 
 pub struct ForeignGridAreas {
     votes: Votes,
-    forgery_mask: Box<[u8]>,
     forged_regions: Box<[ForgedRegion]>,
     lnfa_grids: [f64; 64],
     main_grid: Option<Grid>,
@@ -69,8 +72,8 @@ impl ForeignGridAreas {
         &self.votes
     }
 
-    pub fn forgery_mask(&self) -> &[u8] {
-        self.forgery_mask.as_ref()
+    pub fn build_forgery_mask(&self) -> ForgeryMask {
+        ForgeryMask::from_regions(&self.forged_regions, self.votes.width, self.votes.height)
     }
 
     /// Get all the parts of the image where a JPEG grid is detected with its grid origin different from the main JPEG grid
@@ -95,12 +98,11 @@ impl ForeignGridAreas {
     }
 }
 
+/// Contains the result for the detection of missing grid areas
 pub struct MissingGridAreas {
     votes: Votes,
 
     missing_regions: Box<[ForgedRegion]>,
-
-    forgery_mask: Box<[u8]>,
 }
 
 impl MissingGridAreas {
@@ -113,11 +115,13 @@ impl MissingGridAreas {
         self.missing_regions.as_ref()
     }
 
-    pub fn forgery_mask(&self) -> &[u8] {
-        self.forgery_mask.as_ref()
+    /// Builds a forgery mask that considers the pixels that are part of an area that have missing JPEG traces as forged
+    pub fn build_forgery_mask(self) -> ForgeryMask {
+        ForgeryMask::from_regions(&self.missing_regions, self.votes.width, self.votes.height)
     }
 }
 
+/// JPEG grid detector applied to forgery detection
 pub struct Zero {
     luminance: LuminanceImage,
 
@@ -125,6 +129,7 @@ pub struct Zero {
 }
 
 impl Zero {
+    /// Initializes a forgery detection using the given image
     pub fn from_image(image: &DynamicImage) -> Self {
         let luminance = image.to_luma32f_zero();
 
@@ -138,7 +143,7 @@ impl Zero {
     ///
     /// # Errors
     ///
-    /// It returns a error if the given image does not have the same dimension as the original image.
+    /// It returns an error if the given image does not have the same dimension as the original image.
     pub fn with_missing_grids_detection<'a>(
         mut self,
         jpeg_99: impl Into<Option<&'a DynamicImage>>,
@@ -157,6 +162,7 @@ impl Zero {
         Ok(self)
     }
 
+    /// Runs the forgery detection algorithm
     pub fn detect_forgeries(self) -> (ForeignGridAreas, Option<MissingGridAreas>) {
         // The API ensures that both `self.luminance` and `self.jpeg_99` have the same dimensions.
         let width = self.luminance.width();
@@ -164,11 +170,10 @@ impl Zero {
 
         let votes = Votes::from_luminance(&self.luminance);
         let (main_grid, lnfa_grids) = votes.detect_global_grids();
-        let (forged_regions, forgery_mask) = votes.detect_forgeries(main_grid, Grid(63));
+        let forged_regions = votes.detect_forgeries(main_grid, Grid(63));
 
         let forgeries = ForeignGridAreas {
             votes,
-            forgery_mask,
             forged_regions,
             lnfa_grids,
             main_grid,
@@ -190,13 +195,11 @@ impl Zero {
                 // Try to detect an imposed JPEG grid. No grid is to be excluded
                 // and we are interested only in grid with origin (0,0), so:
                 // grid_to_exclude = None and grid_max = 0
-                let (jpeg_99_forged_regions, jpeg_99_forgery_mask) =
-                    jpeg_99_votes.detect_forgeries(None, Grid(0));
+                let jpeg_99_forged_regions = jpeg_99_votes.detect_forgeries(None, Grid(0));
 
                 let missing_grid_areas = MissingGridAreas {
                     votes: jpeg_99_votes,
                     missing_regions: jpeg_99_forged_regions,
-                    forgery_mask: jpeg_99_forgery_mask,
                 };
 
                 return (forgeries, Some(missing_grid_areas));
@@ -239,6 +242,7 @@ impl IndexMut<usize> for Votes {
 }
 
 impl Votes {
+    /// Computes the votes for the given luminance image
     fn from_luminance(image: &LuminanceImage) -> Self {
         struct State {
             zero: Vec<u32>,
@@ -367,7 +371,7 @@ impl Votes {
         &self,
         grid_to_exclude: Option<Grid>,
         grid_max: Grid,
-    ) -> (Box<[ForgedRegion]>, Box<[u8]>) {
+    ) -> Box<[ForgedRegion]> {
         let p = 1.0 / 64.0;
 
         // Distance to look for neighbors in the region growing process.
@@ -380,11 +384,7 @@ impl Votes {
         // minimal block size that can lead to a meaningful detection
         let min_size = (64.0 * self.log_nt / 64.0f64.log10()).ceil() as usize;
 
-        let mut mask_aux = bitvec![0; self.votes.len()];
         let mut used = bitvec![0; self.votes.len()];
-
-        let mut forgery_mask = bitvec![0; self.votes.len()];
-        let mut forgery_mask_reg = vec![0; self.votes.len()];
 
         let mut forged_regions = Vec::new();
 
@@ -466,52 +466,26 @@ impl Votes {
                             y1,
                             grid,
                             lnfa,
+                            regions_xy: regions_xy.into_boxed_slice(),
                         });
-
-                        // mark points of the region in the forgery mask
-                        for (reg_x, reg_y) in &regions_xy {
-                            let index = reg_x + reg_y * self.width;
-                            forgery_mask.set(index as usize, true);
-                        }
                     }
                 }
             }
         }
 
-        // regularized forgery mask by a morphologic closing operator
-        for x in w..(self.width - w) {
-            for y in w..(self.height - w) {
-                let index = (x + y * self.width) as usize;
-                if forgery_mask[index] {
-                    for xx in (x - w)..=(x + w) {
-                        for yy in (y - w)..=(y + w) {
-                            let index = (xx + yy * self.width) as usize;
-                            mask_aux.set(index, true);
-                            forgery_mask_reg[index] = 255;
-                        }
-                    }
-                }
-            }
-        }
+        forged_regions.into_boxed_slice()
+    }
 
-        for x in w..(self.width - w) {
-            for y in w..(self.height - w) {
-                let index = (x + y * self.width) as usize;
-                if !mask_aux[index] {
-                    for xx in (x - w)..=(x + w) {
-                        for yy in (y - w)..=(y + w) {
-                            let index = (xx + yy * self.width) as usize;
-                            forgery_mask_reg[index] = 0;
-                        }
-                    }
-                }
-            }
-        }
+    pub fn to_luma_image(&self) -> ImageBuffer<Luma<u8>, Vec<u8>> {
+        ImageBuffer::from_fn(self.width, self.height, |x, y| {
+            let value = if let Some(value) = self[[x, y]] {
+                value.0
+            } else {
+                255
+            };
 
-        (
-            forged_regions.into_boxed_slice(),
-            forgery_mask_reg.into_boxed_slice(),
-        )
+            Luma([value])
+        })
     }
 }
 
@@ -659,4 +633,88 @@ fn log_nfa(n: u32, k: u32, p: f64, log_nt: f64) -> f64 {
     }
 
     bin_tail.log10() + log_nt
+}
+
+/// A mask that represents the pixels of an image that are considered forged
+pub struct ForgeryMask {
+    mask: BitVec,
+    width: u32,
+    height: u32,
+}
+
+impl ForgeryMask {
+    /// Transforms the forgery mask into a luminance image.
+    ///
+    /// Each pixel considered forged is white, all the others are black.
+    pub fn into_luma_image(self) -> ImageBuffer<Luma<u8>, Vec<u8>> {
+        ImageBuffer::from_fn(self.width, self.height, |x, y| {
+            let index = (x + y * self.width) as usize;
+
+            Luma([u8::from(self.mask[index]) * 255])
+        })
+    }
+
+    /// Returns `true` if the pixel at `[x,y]` is considered forged
+    pub fn is_forged(&self, x: u32, y: u32) -> bool {
+        self.mask
+            .get((x + y * self.width) as usize)
+            .as_deref()
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Returns the width of the forgery mask
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Returns the height of the forgery mask
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Builds a forgery mask for a set of forged regions.
+    ///
+    /// "Due to variations in the number of votes, the raw forgery mask contains holes.
+    /// To give a more useful forgery map,
+    /// these holes are filled by a mathematical morphology closing
+    /// operator with a square structuring element of size W
+    /// (the same as the neighborhood used in the region growing)."
+    fn from_regions(regions: &[ForgedRegion], width: u32, height: u32) -> Self {
+        let w = 9;
+        let mut mask_aux = bitvec![0; width as usize * height as usize];
+        let mut forgery_mask = bitvec![0; width as usize * height as usize];
+
+        for forged in regions {
+            for &(x, y) in forged.regions_xy.iter() {
+                for xx in (x - w)..=(x + w) {
+                    for yy in (y - w)..=(y + w) {
+                        let index = (xx + yy * width) as usize;
+                        mask_aux.set(index, true);
+                        forgery_mask.set(index, true);
+                    }
+                }
+            }
+        }
+
+        for x in w..width.saturating_sub(w) {
+            for y in w..height.saturating_sub(w) {
+                let index = (x + y * width) as usize;
+                if !mask_aux[index] {
+                    for xx in (x - w)..=(x + w) {
+                        for yy in (y - w)..=(y + w) {
+                            let index = (xx + yy * width) as usize;
+                            forgery_mask.set(index, false);
+                        }
+                    }
+                }
+            }
+        }
+
+        Self {
+            mask: forgery_mask,
+            width,
+            height,
+        }
+    }
 }

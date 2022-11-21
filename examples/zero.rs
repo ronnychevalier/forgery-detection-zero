@@ -6,7 +6,7 @@ use anyhow::Context;
 use clap::Parser;
 
 use image::io::Reader as ImageReader;
-use image::{ImageBuffer, ImageFormat};
+use image::ImageFormat;
 
 use forgery_detection_zero::{Grid, Zero};
 
@@ -97,24 +97,19 @@ fn main() -> anyhow::Result<()> {
         println!(" log(nfa) = {}", forged_region.lnfa);
     }
 
-    let votes = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
-        let value = if let Some(value) = forgeries.votes()[[x, y]] {
-            value.0
-        } else {
-            255
-        };
-        image::Luma([value])
-    });
-    votes.save("votes.png")?;
+    let number_of_regions = forgeries.forged_regions().len()
+        + jpeg_99.as_ref().map_or(0, |missing_grid_areas| {
+            missing_grid_areas.missing_regions().len()
+        });
 
-    let forgery_mask = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
-        let index = (x + y * jpeg.width()) as usize;
+    forgeries.votes().to_luma_image().save("votes.png")?;
 
-        image::Luma([forgeries.forgery_mask()[index] as u8])
-    });
-    forgery_mask.save("mask_f.png")?;
+    forgeries
+        .build_forgery_mask()
+        .into_luma_image()
+        .save("mask_f.png")?;
 
-    if let Some(missing_grid_areas) = &jpeg_99 {
+    if let Some(missing_grid_areas) = jpeg_99 {
         if forgeries.main_grid().is_some() {
             for missing_region in missing_grid_areas.missing_regions() {
                 println!("\nA region with missing JPEG grid was found here:");
@@ -138,29 +133,16 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        let votes = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
-            let value = if let Some(value) = missing_grid_areas.votes()[[x, y]] {
-                value.0
-            } else {
-                255
-            };
+        missing_grid_areas
+            .votes()
+            .to_luma_image()
+            .save("votes_jpeg.png")?;
 
-            image::Luma([value])
-        });
-        votes.save("votes_jpeg.png")?;
-
-        let forgery_mask = ImageBuffer::from_fn(jpeg.width(), jpeg.height(), |x, y| {
-            let index = (x + y * jpeg.width()) as usize;
-
-            image::Luma([missing_grid_areas.forgery_mask()[index] as u8])
-        });
-        forgery_mask.save("mask_m.png")?;
+        missing_grid_areas
+            .build_forgery_mask()
+            .into_luma_image()
+            .save("mask_m.png")?;
     }
-
-    let number_of_regions = forgeries.forged_regions().len()
-        + jpeg_99.map_or(0, |missing_grid_areas| {
-            missing_grid_areas.missing_regions().len()
-        });
 
     if number_of_regions == 0 && forgeries.main_grid().unwrap_or(Grid(0)).0 < 1 {
         println!("\nNo suspicious traces found in the image with the performed analysis.");
