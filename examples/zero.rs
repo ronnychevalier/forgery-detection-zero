@@ -40,10 +40,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut global_grids = 0;
 
-    let (forgeries, jpeg_99) = Zero::from_image(&jpeg)
-        .with_missing_grids_detection(&jpeg_99)
-        .context("The images should have the same dimension")?
-        .detect_forgeries();
+    let forgeries = Zero::from_image(&jpeg).detect_forgeries();
     if let Some(main_grid) = forgeries.main_grid() {
         println!(
             "main grid found: #{} ({},{}) log(nfa) = {}\n",
@@ -56,6 +53,12 @@ fn main() -> anyhow::Result<()> {
     } else {
         println!("No overall JPEG grid found.");
     }
+
+    let jpeg_99 = jpeg_99
+        .map(|jpeg_99| forgeries.detect_missing_grid_areas(&jpeg_99))
+        .transpose()
+        .context("The images should have the same dimension")?
+        .flatten();
 
     for (i, &value) in forgeries.lnfa_grids().iter().enumerate() {
         if value < 0.0

@@ -96,6 +96,48 @@ impl ForeignGridAreas {
     pub fn is_cropped(&self) -> bool {
         self.main_grid.map_or(false, |grid| grid.0 > 0)
     }
+
+    /// Detects the areas of the image that are missing a grid.
+    ///
+    /// # Errors
+    ///
+    /// It returns an error if the given image does not have the same dimension as the original image.
+    pub fn detect_missing_grid_areas(
+        &self,
+        jpeg_99: &DynamicImage,
+    ) -> Result<Option<MissingGridAreas>> {
+        let main_grid = if let Some(main_grid) = self.main_grid {
+            main_grid
+        } else {
+            return Ok(None);
+        };
+        let jpeg_99 = jpeg_99.to_luma32f_zero();
+
+        if (self.votes.width, self.votes.height) != jpeg_99.dimensions() {
+            return Err(Error::DifferentDimensions);
+        }
+
+        let mut jpeg_99_votes = Votes::from_luminance(&jpeg_99);
+        // update votemap by avoiding the votes for the main grid
+        for x in 0..self.votes.width {
+            for y in 0..self.votes.height {
+                let index = (x + y * self.votes.width) as usize;
+                if self.votes[index] == Some(main_grid) {
+                    jpeg_99_votes[index] = None;
+                }
+            }
+        }
+
+        // Try to detect an imposed JPEG grid. No grid is to be excluded
+        // and we are interested only in grid with origin (0,0), so:
+        // grid_to_exclude = None and grid_max = 0
+        let jpeg_99_forged_regions = jpeg_99_votes.detect_forgeries(None, Grid(0));
+
+        Ok(Some(MissingGridAreas {
+            votes: jpeg_99_votes,
+            missing_regions: jpeg_99_forged_regions,
+        }))
+    }
 }
 
 /// Contains the result for the detection of missing grid areas
@@ -124,8 +166,6 @@ impl MissingGridAreas {
 /// JPEG grid detector applied to forgery detection
 pub struct Zero {
     luminance: LuminanceImage,
-
-    jpeg_99: Option<LuminanceImage>,
 }
 
 impl Zero {
@@ -133,80 +173,21 @@ impl Zero {
     pub fn from_image(image: &DynamicImage) -> Self {
         let luminance = image.to_luma32f_zero();
 
-        Self {
-            luminance,
-            jpeg_99: None,
-        }
-    }
-
-    /// Enables the missing grids detection with the given image that represents the same image but compressed with a 99% quality.
-    ///
-    /// # Errors
-    ///
-    /// It returns an error if the given image does not have the same dimension as the original image.
-    pub fn with_missing_grids_detection<'a>(
-        mut self,
-        jpeg_99: impl Into<Option<&'a DynamicImage>>,
-    ) -> Result<Self> {
-        let image = if let Some(image) = jpeg_99.into() {
-            image
-        } else {
-            return Ok(self);
-        };
-
-        if image.dimensions() != self.luminance.dimensions() {
-            return Err(Error::DifferentDimensions);
-        }
-
-        self.jpeg_99 = Some(image.to_luma32f_zero());
-        Ok(self)
+        Self { luminance }
     }
 
     /// Runs the forgery detection algorithm
-    pub fn detect_forgeries(self) -> (ForeignGridAreas, Option<MissingGridAreas>) {
-        // The API ensures that both `self.luminance` and `self.jpeg_99` have the same dimensions.
-        let width = self.luminance.width();
-        let height = self.luminance.height();
-
+    pub fn detect_forgeries(self) -> ForeignGridAreas {
         let votes = Votes::from_luminance(&self.luminance);
         let (main_grid, lnfa_grids) = votes.detect_global_grids();
         let forged_regions = votes.detect_forgeries(main_grid, Grid(63));
 
-        let forgeries = ForeignGridAreas {
+        ForeignGridAreas {
             votes,
             forged_regions,
             lnfa_grids,
             main_grid,
-        };
-
-        if let Some(main_grid) = main_grid {
-            if let Some(jpeg_99) = self.jpeg_99 {
-                let mut jpeg_99_votes = Votes::from_luminance(&jpeg_99);
-                // update votemap by avoiding the votes for the main grid
-                for x in 0..width {
-                    for y in 0..height {
-                        let index = (x + y * width) as usize;
-                        if forgeries.votes[index] == Some(main_grid) {
-                            jpeg_99_votes[index] = None;
-                        }
-                    }
-                }
-
-                // Try to detect an imposed JPEG grid. No grid is to be excluded
-                // and we are interested only in grid with origin (0,0), so:
-                // grid_to_exclude = None and grid_max = 0
-                let jpeg_99_forged_regions = jpeg_99_votes.detect_forgeries(None, Grid(0));
-
-                let missing_grid_areas = MissingGridAreas {
-                    votes: jpeg_99_votes,
-                    missing_regions: jpeg_99_forged_regions,
-                };
-
-                return (forgeries, Some(missing_grid_areas));
-            }
         }
-
-        (forgeries, None)
     }
 }
 
