@@ -5,7 +5,6 @@ use std::ops::{Index, IndexMut};
 use std::sync::Mutex;
 
 use bitvec::bitvec;
-
 use bitvec::vec::BitVec;
 
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
@@ -52,10 +51,12 @@ impl Grid {
 /// An area of an image that has been forged.
 #[derive(Default, Clone, Debug)]
 pub struct ForgedRegion {
-    pub x0: u32,
-    pub y0: u32,
-    pub x1: u32,
-    pub y1: u32,
+    /// Bottom left of the bounding box
+    pub start: (u32, u32),
+
+    /// Top right of the bounding box
+    pub end: (u32, u32),
+
     pub grid: Grid,
     pub lnfa: f64,
     regions_xy: Box<[(u32, u32)]>,
@@ -448,10 +449,8 @@ impl Votes {
                     if lnfa < 0.0 {
                         // meaningful different grid found
                         forged_regions.push(ForgedRegion {
-                            x0,
-                            y0,
-                            x1,
-                            y1,
+                            start: (x0, y0),
+                            end: (x1, y1),
                             grid,
                             lnfa,
                             regions_xy: regions_xy.into_boxed_slice(),

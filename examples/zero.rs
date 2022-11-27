@@ -83,12 +83,12 @@ fn main() -> anyhow::Result<()> {
         }
         print!(
             "bounding box: {} {} to {} {} [{}x{}]",
-            forged_region.x0,
-            forged_region.y0,
-            forged_region.x1,
-            forged_region.y1,
-            forged_region.x1 - forged_region.x0 + 1,
-            forged_region.y1 - forged_region.y0 + 1
+            forged_region.start.0,
+            forged_region.start.1,
+            forged_region.end.0,
+            forged_region.end.1,
+            forged_region.end.0 - forged_region.start.0 + 1,
+            forged_region.end.1 - forged_region.start.1 + 1
         );
         print!(
             " grid: #{} ({},{})",
@@ -118,12 +118,12 @@ fn main() -> anyhow::Result<()> {
                 println!("\nA region with missing JPEG grid was found here:");
                 print!(
                     "bounding box: {} {} to {} {} [{}x{}]",
-                    missing_region.x0,
-                    missing_region.y0,
-                    missing_region.x1,
-                    missing_region.y1,
-                    missing_region.x1 - missing_region.x0 + 1,
-                    missing_region.y1 - missing_region.y0 + 1
+                    missing_region.start.0,
+                    missing_region.start.1,
+                    missing_region.end.0,
+                    missing_region.end.1,
+                    missing_region.end.0 - missing_region.start.0 + 1,
+                    missing_region.end.1 - missing_region.start.1 + 1
                 );
                 print!(
                     " grid: #{} ({},{})",
