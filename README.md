@@ -21,7 +21,7 @@ Let's say you have an image called `image.jpg`.
 First, convert this image to a 99% quality JPEG using imagemagick `convert` tool:
 
 ```shell
-convert  -quality 99% image.jpg image_99.jpg
+convert -quality 99% image.jpg image_99.jpg
 ```
 
 Then you can use the example to generate the forgery masks:

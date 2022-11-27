@@ -49,6 +49,7 @@ impl Grid {
     }
 }
 
+/// An area of an image that has been forged.
 #[derive(Default, Clone, Debug)]
 pub struct ForgedRegion {
     pub x0: u32,
@@ -72,6 +73,7 @@ impl ForeignGridAreas {
         &self.votes
     }
 
+    /// Builds a [forgery mask](`ForgeryMask`) that considers the pixels that are part of an area that have a grid different from the main one as forged
     pub fn build_forgery_mask(&self) -> ForgeryMask {
         ForgeryMask::from_regions(&self.forged_regions, self.votes.width, self.votes.height)
     }
@@ -157,7 +159,7 @@ impl MissingGridAreas {
         self.missing_regions.as_ref()
     }
 
-    /// Builds a forgery mask that considers the pixels that are part of an area that have missing JPEG traces as forged
+    /// Builds a [forgery mask](`ForgeryMask`) that considers the pixels that are part of an area that have missing JPEG traces as forged
     pub fn build_forgery_mask(self) -> ForgeryMask {
         ForgeryMask::from_regions(&self.missing_regions, self.votes.width, self.votes.height)
     }
@@ -191,6 +193,11 @@ impl Zero {
     }
 }
 
+/// The grid origin vote map of an image.
+///
+/// Each pixel in the image may belong to one of the 64 overlapping grids.
+/// This vote map contains the result of the vote for each pixel.
+#[derive(Clone)]
 pub struct Votes {
     /// A vote is an unsigned integer between `0` and `63`
     votes: Box<[Option<Grid>]>,
@@ -457,6 +464,10 @@ impl Votes {
         forged_regions.into_boxed_slice()
     }
 
+    /// Transforms the votes into a luminance image.
+    ///
+    /// When there is a tie, the pixel is black.
+    /// Otherwise, the pixel has a color between `0` and `63` to represent its vote.
     pub fn to_luma_image(&self) -> ImageBuffer<Luma<u8>, Vec<u8>> {
         ImageBuffer::from_fn(self.width, self.height, |x, y| {
             let value = if let Some(value) = self[[x, y]] {
@@ -616,7 +627,7 @@ fn log_nfa(n: u32, k: u32, p: f64, log_nt: f64) -> f64 {
     bin_tail.log10() + log_nt
 }
 
-/// A mask that represents the pixels of an image that are considered forged
+/// A mask that represents the pixels of an image that have been forged
 pub struct ForgeryMask {
     mask: BitVec,
     width: u32,
