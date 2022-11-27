@@ -125,8 +125,8 @@ impl ForeignGridAreas {
         for x in 0..self.votes.width {
             for y in 0..self.votes.height {
                 let index = (x + y * self.votes.width) as usize;
-                if self.votes[index] == Some(main_grid) {
-                    jpeg_99_votes[index] = None;
+                if self.votes[index] == Vote::AlignedWith(main_grid) {
+                    jpeg_99_votes[index] = Vote::Invalid;
                 }
             }
         }
@@ -194,14 +194,35 @@ impl Zero {
     }
 }
 
+/// The result of the vote to which grid a pixel is aligned with.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Vote {
+    /// The pixel is aligned with a grid.
+    AlignedWith(Grid),
+
+    /// A vote is invalid when the pixel is within a 7 pixel wide region around the image border or when there is a tie.
+    Invalid,
+}
+
+impl Vote {
+    /// Converts a [`Vote`] to an [`Option`].
+    ///
+    /// It returns a grid if the vote is valid, `None` otherwise.
+    pub fn grid(&self) -> Option<Grid> {
+        match self {
+            Vote::AlignedWith(grid) => Some(*grid),
+            Vote::Invalid => None,
+        }
+    }
+}
+
 /// The grid origin vote map of an image.
 ///
 /// Each pixel in the image may belong to one of the 64 overlapping grids.
 /// This vote map contains the result of the vote for each pixel.
 #[derive(Clone)]
 pub struct Votes {
-    /// A vote is an unsigned integer between `0` and `63`
-    votes: Box<[Option<Grid>]>,
+    votes: Box<[Vote]>,
 
     width: u32,
     height: u32,
@@ -209,7 +230,7 @@ pub struct Votes {
 }
 
 impl Index<usize> for Votes {
-    type Output = Option<Grid>;
+    type Output = Vote;
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.votes[index]
@@ -217,7 +238,7 @@ impl Index<usize> for Votes {
 }
 
 impl Index<[u32; 2]> for Votes {
-    type Output = Option<Grid>;
+    type Output = Vote;
 
     fn index(&self, xy: [u32; 2]) -> &Self::Output {
         &self.votes[(xy[0] + xy[1] * self.width) as usize]
@@ -235,11 +256,11 @@ impl Votes {
     fn from_luminance(image: &LuminanceImage) -> Self {
         struct State {
             zero: Vec<u32>,
-            votes: Vec<Option<Grid>>,
+            votes: Vec<Vote>,
         }
         let cosine = cosine_table();
         let zero = vec![0u32; (image.width() * image.height()) as usize];
-        let votes = vec![None; (image.width() * image.height()) as usize];
+        let votes = vec![Vote::Invalid; (image.width() * image.height()) as usize];
 
         let lock = Mutex::new(State { zero, votes });
 
@@ -267,15 +288,15 @@ impl Votes {
                                 match number_of_zeroes.cmp(state.zero.get_unchecked(index)) {
                                     std::cmp::Ordering::Equal => {
                                         // if two grids are tied in number of zeros, do not vote
-                                        *state.votes.get_unchecked_mut(index) = None;
+                                        *state.votes.get_unchecked_mut(index) = Vote::Invalid;
                                     }
                                     std::cmp::Ordering::Greater => {
                                         // update votes when the current grid has more zeros
                                         *state.zero.get_unchecked_mut(index) = number_of_zeroes;
                                         *state.votes.get_unchecked_mut(index) = if const_along {
-                                            None
+                                            Vote::Invalid
                                         } else {
-                                            Some(Grid::from_xy(x, y))
+                                            Vote::AlignedWith(Grid::from_xy(x, y))
                                         };
                                     }
                                     std::cmp::Ordering::Less => (),
@@ -294,21 +315,21 @@ impl Votes {
         for xx in 0..image.width() {
             for yy in 0..7 {
                 let index = (xx + yy * image.width()) as usize;
-                votes[index] = None;
+                votes[index] = Vote::Invalid;
             }
             for yy in (image.height() - 7)..image.height() {
                 let index = (xx + yy * image.width()) as usize;
-                votes[index] = None;
+                votes[index] = Vote::Invalid;
             }
         }
         for yy in 0..image.height() {
             for xx in 0..7 {
                 let index = (xx + yy * image.width()) as usize;
-                votes[index] = None;
+                votes[index] = Vote::Invalid;
             }
             for xx in (image.width() - 7)..image.width() {
                 let index = (xx + yy * image.width()) as usize;
-                votes[index] = None;
+                votes[index] = Vote::Invalid;
             }
         }
 
@@ -329,7 +350,7 @@ impl Votes {
 
         // count votes per possible grid origin
         // and keep track of the grid with the maximum of votes
-        let most_voted_grid = self.votes.iter().flatten().max_by_key(|grid| {
+        let most_voted_grid = self.votes.iter().filter_map(Vote::grid).max_by_key(|grid| {
             let votes = &mut grid_votes[grid.0 as usize];
             *votes += 1;
             *votes
@@ -348,7 +369,7 @@ impl Votes {
         // meaningful grid -> main grid found!
         if let Some(most_voted_grid) = most_voted_grid {
             if lnfa_grids[most_voted_grid.0 as usize] < 0.0 {
-                return (Some(*most_voted_grid), lnfa_grids);
+                return (Some(most_voted_grid), lnfa_grids);
             }
         }
 
@@ -384,10 +405,11 @@ impl Votes {
                 if used[index] {
                     continue;
                 }
-                if self[index] == grid_to_exclude {
+                let grid = self[index].grid();
+                if grid == grid_to_exclude {
                     continue;
                 }
-                let grid = if let Some(grid) = self[index] {
+                let grid = if let Some(grid) = grid {
                     grid
                 } else {
                     continue;
@@ -418,7 +440,7 @@ impl Votes {
                             if used[index] {
                                 continue;
                             }
-                            if self[index] != Some(grid) {
+                            if self[index] != Vote::AlignedWith(grid) {
                                 continue;
                             }
 
@@ -469,8 +491,8 @@ impl Votes {
     /// Otherwise, the pixel has a color between `0` and `63` to represent its vote.
     pub fn to_luma_image(&self) -> ImageBuffer<Luma<u8>, Vec<u8>> {
         ImageBuffer::from_fn(self.width, self.height, |x, y| {
-            let value = if let Some(value) = self[[x, y]] {
-                value.0
+            let value = if let Vote::AlignedWith(grid) = self[[x, y]] {
+                grid.0
             } else {
                 255
             };
