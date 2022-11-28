@@ -1,9 +1,9 @@
 use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Pixel};
 
-pub type LuminanceImage = ImageBuffer<Luma<f64>, Vec<f64>>;
+use crate::LuminanceImage;
 
-pub trait ToLumaZero {
-    fn to_luma32f_zero(&self) -> ImageBuffer<Luma<f64>, Vec<f64>>;
+pub(crate) trait ToLumaZero {
+    fn to_luma32f_zero(&self) -> LuminanceImage;
 }
 
 #[inline]
@@ -17,13 +17,18 @@ fn rgb_to_luma_zero(rgb: &[u8]) -> f64 {
 
 impl ToLumaZero for DynamicImage {
     fn to_luma32f_zero(&self) -> LuminanceImage {
-        let mut buffer: LuminanceImage = ImageBuffer::new(self.width(), self.height());
+        let mut buffer: ImageBuffer<Luma<f64>, Vec<f64>> =
+            ImageBuffer::new(self.width(), self.height());
         for (to, from) in buffer.pixels_mut().zip(self.pixels()) {
             let gray = to.channels_mut();
             let rgb = from.2.channels();
             gray[0] = rgb_to_luma_zero(rgb);
         }
 
-        buffer
+        LuminanceImage {
+            image: buffer.into_raw().into_boxed_slice(),
+            width: self.width(),
+            height: self.height(),
+        }
     }
 }

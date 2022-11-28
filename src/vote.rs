@@ -6,7 +6,8 @@ use std::sync::Mutex;
 
 use bitvec::bitvec;
 
-use image::{GenericImageView, ImageBuffer, Luma};
+#[cfg(feature = "image")]
+use image::{ImageBuffer, Luma};
 
 use itertools::Itertools;
 
@@ -15,8 +16,7 @@ use libm::lgamma;
 #[cfg(feature = "rayon")]
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
-use crate::convert::LuminanceImage;
-use crate::{ForgedRegion, Grid};
+use crate::{ForgedRegion, Grid, LuminanceImage};
 
 /// The result of the vote to which grid a pixel is aligned with.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -32,10 +32,10 @@ impl Vote {
     /// Converts a [`Vote`] to an [`Option`].
     ///
     /// It returns a grid if the vote is valid, `None` otherwise.
-    pub fn grid(&self) -> Option<Grid> {
+    pub const fn grid(&self) -> Option<Grid> {
         match self {
-            Vote::AlignedWith(grid) => Some(*grid),
-            Vote::Invalid => None,
+            Self::AlignedWith(grid) => Some(*grid),
+            Self::Invalid => None,
         }
     }
 }
@@ -313,6 +313,7 @@ impl Votes {
     ///
     /// When there is a tie, the pixel is black.
     /// Otherwise, the pixel has a color between `0` and `63` to represent its vote.
+    #[cfg(feature = "image")]
     pub fn to_luma_image(&self) -> ImageBuffer<Luma<u8>, Vec<u8>> {
         ImageBuffer::from_fn(self.width, self.height, |x, y| {
             let value = if let Vote::AlignedWith(grid) = self[[x, y]] {

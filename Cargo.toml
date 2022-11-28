@@ -12,12 +12,13 @@ keywords = ["forgery-detection", "image-processing", "image-forensics", "jpeg"]
 readme = "README.md"
 
 [features]
-default = ["rayon"]
+default = ["rayon", "image"]
 rayon = ["dep:rayon"]
+image = ["dep:image"]
 
 [dependencies]
 bitvec = { version = "1", default-features = false, features = ["alloc"] }
-image = { version = "0.24" }
+image = { version = "0.24", optional = true }
 itertools = "0.10"
 libm = "0.2.5"
 rayon = { version = "1.5", optional = true }

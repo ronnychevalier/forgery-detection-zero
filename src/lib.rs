@@ -3,12 +3,16 @@
 use bitvec::bitvec;
 use bitvec::vec::BitVec;
 
-use image::{DynamicImage, ImageBuffer, Luma};
+#[cfg(feature = "image")]
+use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
 
+#[cfg(feature = "image")]
 mod convert;
 mod vote;
 
-use convert::{LuminanceImage, ToLumaZero};
+#[cfg(feature = "image")]
+use convert::ToLumaZero;
+
 pub use vote::{Vote, Votes};
 
 /// Represents the errors that can be raised when using [`Zero`].
@@ -17,6 +21,10 @@ pub enum Error {
     /// The image and its 99% JPEG quality equivalent have different dimensions
     #[error("image and jpeg99 have different dimensions")]
     DifferentDimensions,
+
+    /// The dimensions given with the raw image are invalid (the size of the array is inconsistent with the width and height)
+    #[error("inconsistency between the raw image array and the width and height provided")]
+    InvalidRawDimensions,
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -96,6 +104,7 @@ impl ForeignGridAreas {
     /// # Errors
     ///
     /// It returns an error if the given image does not have the same dimension as the original image.
+    #[cfg(feature = "image")]
     pub fn detect_missing_grid_areas(
         &self,
         jpeg_99: &DynamicImage,
@@ -105,11 +114,12 @@ impl ForeignGridAreas {
         } else {
             return Ok(None);
         };
-        let jpeg_99 = jpeg_99.to_luma32f_zero();
 
         if (self.votes.width, self.votes.height) != jpeg_99.dimensions() {
             return Err(Error::DifferentDimensions);
         }
+
+        let jpeg_99 = jpeg_99.to_luma32f_zero();
 
         let mut jpeg_99_votes = Votes::from_luminance(&jpeg_99);
         // update votemap by avoiding the votes for the main grid
@@ -164,10 +174,30 @@ pub struct Zero {
 
 impl Zero {
     /// Initializes a forgery detection using the given image
+    #[cfg(feature = "image")]
     pub fn from_image(image: &DynamicImage) -> Self {
         let luminance = image.to_luma32f_zero();
 
         Self { luminance }
+    }
+
+    /// Initializes a forgery detection using a raw luminance image
+    ///
+    /// # Errors
+    ///
+    /// It returns an error if the raw image array does not have a length consistent with the `width` and `height` parameters.
+    pub fn from_luminance_raw(luminance: Box<[f64]>, width: u32, height: u32) -> Result<Self> {
+        if luminance.len() != width.saturating_mul(height) as usize {
+            return Err(Error::InvalidRawDimensions);
+        }
+
+        Ok(Self {
+            luminance: LuminanceImage {
+                image: luminance,
+                width,
+                height,
+            },
+        })
     }
 
     /// Runs the forgery detection algorithm
@@ -196,6 +226,7 @@ impl ForgeryMask {
     /// Transforms the forgery mask into a luminance image.
     ///
     /// Each pixel considered forged is white, all the others are black.
+    #[cfg(feature = "image")]
     pub fn into_luma_image(self) -> ImageBuffer<Luma<u8>, Vec<u8>> {
         ImageBuffer::from_fn(self.width, self.height, |x, y| {
             let index = (x + y * self.width) as usize;
@@ -266,5 +297,34 @@ impl ForgeryMask {
             width,
             height,
         }
+    }
+}
+
+pub(crate) struct LuminanceImage {
+    image: Box<[f64]>,
+    width: u32,
+    height: u32,
+}
+
+impl LuminanceImage {
+    pub(crate) fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub(crate) fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub(crate) fn as_raw(&self) -> &[f64] {
+        &self.image
+    }
+
+    /// Gets a pixel without doing bounds checking
+    ///
+    /// # Safety
+    ///
+    /// `x` must be less than `image.width()` and `y` must be less than `image.height()`.
+    pub(crate) unsafe fn unsafe_get_pixel(&self, x: u32, y: u32) -> &f64 {
+        self.image.get_unchecked((x + y * self.width) as usize)
     }
 }
