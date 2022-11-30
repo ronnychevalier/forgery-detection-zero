@@ -1,6 +1,6 @@
 [package]
 name = "forgery-detection-zero"
-version = "0.1.0"
+version = "0.2.0"
 description = "JPEG grid detector applied to forgery detection in digital images"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/ronnychevalier/forgery-detection-zero"
