@@ -17,15 +17,8 @@ It is in the process of being refactored to be more idiomatic.
 
 ## CLI example
 
-Let's say you have an image called `image.jpg`.
-First, convert this image to a 99% quality JPEG using imagemagick `convert` tool:
+You can use the example to generate the forgery masks of an image:
 
 ```shell
-convert -quality 99% image.jpg image_99.jpg
-```
-
-Then you can use the example to generate the forgery masks:
-
-```shell
-cargo r --release --example zero image.jpg image_99.jpg
+cargo r --release --example zero image.jpg
 ```

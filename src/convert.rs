@@ -1,4 +1,8 @@
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma, Pixel};
+use std::io::Cursor;
+
+use image::{self, DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Luma, Pixel};
+
+use jpeg_encoder::JpegColorType;
 
 use crate::LuminanceImage;
 
@@ -30,5 +34,40 @@ impl ToLumaZero for DynamicImage {
             width: self.width(),
             height: self.height(),
         }
+    }
+}
+
+impl jpeg_encoder::ImageBuffer for &LuminanceImage {
+    fn get_jpeg_color_type(&self) -> JpegColorType {
+        JpegColorType::Luma
+    }
+
+    fn width(&self) -> u16 {
+        self.width as u16
+    }
+
+    fn height(&self) -> u16 {
+        self.height as u16
+    }
+
+    fn fill_buffers(&self, y: u16, buffers: &mut [Vec<u8>; 4]) {
+        for x in 0..self.width {
+            let &pixel = unsafe { self.unsafe_get_pixel(x, u32::from(y)) };
+
+            buffers[0].push(pixel as u8);
+        }
+    }
+}
+
+impl LuminanceImage {
+    pub(crate) fn to_jpeg_99_luminance(&self) -> Result<Self, crate::Error> {
+        let mut buffer = Vec::new();
+        let encoder = jpeg_encoder::Encoder::new(&mut buffer, 99);
+        encoder.encode_image(self)?;
+
+        let jpeg_99 =
+            image::io::Reader::with_format(Cursor::new(buffer), ImageFormat::Jpeg).decode()?;
+
+        Ok(jpeg_99.to_luma32f_zero())
     }
 }

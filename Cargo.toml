@@ -23,6 +23,7 @@ itertools = "0.10"
 libm = "0.2.5"
 rayon = { version = "1.5", optional = true }
 thiserror = "1"
+jpeg-encoder = { version = "0.5", features = ["simd"] }
 
 [dev-dependencies]
 anyhow = "1"

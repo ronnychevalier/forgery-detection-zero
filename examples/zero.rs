@@ -1,12 +1,10 @@
-use std::fs::File;
-use std::io::BufReader;
 use std::path::PathBuf;
 
 use anyhow::Context;
+
 use clap::Parser;
 
 use image::io::Reader as ImageReader;
-use image::ImageFormat;
 
 use forgery_detection_zero::{Grid, Zero};
 
@@ -29,15 +27,6 @@ fn main() -> anyhow::Result<()> {
         .decode()
         .with_context(|| format!("Failed to decode the image {}", args.image.display()))?;
 
-    let jpeg_99 = args.jpeg_99.and_then(|jpeg_99| {
-        let file = File::open(jpeg_99).ok()?;
-        let reader = BufReader::new(file);
-
-        ImageReader::with_format(reader, ImageFormat::Jpeg)
-            .decode()
-            .ok()
-    });
-
     let mut global_grids = 0;
 
     let forgeries = Zero::from_image(&jpeg).detect_forgeries();
@@ -54,11 +43,9 @@ fn main() -> anyhow::Result<()> {
         println!("No overall JPEG grid found.");
     }
 
-    let jpeg_99 = jpeg_99
-        .map(|jpeg_99| forgeries.detect_missing_grid_areas(&jpeg_99))
-        .transpose()
-        .context("The images should have the same dimension")?
-        .flatten();
+    let jpeg_99 = forgeries
+        .detect_missing_grid_areas()
+        .context("Failed to detect the missing grid areas")?;
 
     for (i, &value) in forgeries.lnfa_grids().iter().enumerate() {
         if value < 0.0

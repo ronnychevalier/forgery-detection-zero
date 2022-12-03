@@ -4,7 +4,7 @@ use bitvec::bitvec;
 use bitvec::vec::BitVec;
 
 #[cfg(feature = "image")]
-use image::{DynamicImage, GenericImageView, ImageBuffer, Luma};
+use image::{DynamicImage, ImageBuffer, Luma};
 
 #[cfg(feature = "image")]
 mod convert;
@@ -18,13 +18,18 @@ pub use vote::{Vote, Votes};
 /// Represents the errors that can be raised when using [`Zero`].
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    /// The image and its 99% JPEG quality equivalent have different dimensions
-    #[error("image and jpeg99 have different dimensions")]
-    DifferentDimensions,
-
     /// The dimensions given with the raw image are invalid (the size of the array is inconsistent with the width and height)
     #[error("inconsistency between the raw image array and the width and height provided")]
     InvalidRawDimensions,
+
+    /// The JPEG encoding failed
+    #[error("failed to encode the original image to a 99% quality JPEG: {0}")]
+    Encoding(#[from] jpeg_encoder::EncodingError),
+
+    /// The JPEG decoding failed
+    #[cfg(feature = "image")]
+    #[error("failed to decode the image: {0}")]
+    Decoding(#[from] image::ImageError),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -62,6 +67,7 @@ pub struct ForgedRegion {
 }
 
 pub struct ForeignGridAreas {
+    luminance: LuminanceImage,
     votes: Votes,
     forged_regions: Box<[ForgedRegion]>,
     lnfa_grids: [f64; 64],
@@ -103,23 +109,16 @@ impl ForeignGridAreas {
     ///
     /// # Errors
     ///
-    /// It returns an error if the given image does not have the same dimension as the original image.
+    /// It returns an error if it failed to encode the original image as 99% quality JPEG.
     #[cfg(feature = "image")]
-    pub fn detect_missing_grid_areas(
-        &self,
-        jpeg_99: &DynamicImage,
-    ) -> Result<Option<MissingGridAreas>> {
+    pub fn detect_missing_grid_areas(&self) -> Result<Option<MissingGridAreas>> {
         let main_grid = if let Some(main_grid) = self.main_grid {
             main_grid
         } else {
             return Ok(None);
         };
 
-        if (self.votes.width, self.votes.height) != jpeg_99.dimensions() {
-            return Err(Error::DifferentDimensions);
-        }
-
-        let jpeg_99 = jpeg_99.to_luma32f_zero();
+        let jpeg_99 = self.luminance.to_jpeg_99_luminance()?;
 
         let mut jpeg_99_votes = Votes::from_luminance(&jpeg_99);
         // update votemap by avoiding the votes for the main grid
@@ -207,6 +206,7 @@ impl Zero {
         let forged_regions = votes.detect_forgeries(main_grid, Grid(63));
 
         ForeignGridAreas {
+            luminance: self.luminance,
             votes,
             forged_regions,
             lnfa_grids,
