@@ -10,10 +10,46 @@ ZERO: a Local JPEG Grid Origin Detector Based on the Number of DCT Zeros and its
 Image Processing On Line, 11 (2021), pp. 396–433. https://doi.org/10.5201/ipol.2021.390
 ```
 
-This library is based on the [original implementation written in C](https://github.com/tinankh/ZERO).
+The original implementation is [written in C](https://github.com/tinankh/ZERO).
 
-At the moment, it is a C-like Rust implementation very close to the original implementation.
-It is in the process of being refactored to be more idiomatic.
+## Library example
+
+Simple usage:
+
+```rust,no_run
+# use forgery_detection_zero::Zero;
+# let jpeg = todo!();
+#
+for r in Zero::from_image(&jpeg).into_iter() {
+    println!(
+        "Forged region detected: from ({}, {}) to ({}, {})",
+        r.start.0, r.start.1, r.end.0, r.end.1,
+    )
+}
+```
+
+More advanced usage:
+
+```rust,no_run
+# use forgery_detection_zero::Zero;
+# let jpeg = todo!();
+#
+let foreign_grid_areas = Zero::from_image(&jpeg).detect_forgeries();
+let missing_grid_areas = foreign_grid_areas
+    .detect_missing_grid_areas()
+    .unwrap()
+    .unwrap();
+let forged_regions = foreign_grid_areas
+    .forged_regions()
+    .iter()
+    .chain(missing_grid_areas.forged_regions());
+for r in forged_regions {
+    println!(
+        "Forged region detected: from ({}, {}) to ({}, {})",
+        r.start.0, r.start.1, r.end.0, r.end.1,
+    )
+}
+```
 
 ## CLI example
 

@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 use bitvec::bitvec;
 use bitvec::vec::BitVec;
 
@@ -143,6 +142,16 @@ impl ForeignGridAreas {
     }
 }
 
+impl IntoIterator for ForeignGridAreas {
+    type Item = ForgedRegion;
+
+    type IntoIter = std::vec::IntoIter<ForgedRegion>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.forged_regions.into_vec().into_iter()
+    }
+}
+
 /// Contains the result for the detection of missing grid areas
 pub struct MissingGridAreas {
     votes: Votes,
@@ -156,7 +165,7 @@ impl MissingGridAreas {
     }
 
     /// Get all the parts of the image that have missing JPEG traces
-    pub fn missing_regions(&self) -> &[ForgedRegion] {
+    pub fn forged_regions(&self) -> &[ForgedRegion] {
         self.missing_regions.as_ref()
     }
 
@@ -166,7 +175,33 @@ impl MissingGridAreas {
     }
 }
 
-/// JPEG grid detector applied to forgery detection
+impl IntoIterator for MissingGridAreas {
+    type Item = ForgedRegion;
+
+    type IntoIter = std::vec::IntoIter<ForgedRegion>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.missing_regions.into_vec().into_iter()
+    }
+}
+
+/// JPEG grid detector applied to forgery detection.
+///
+/// # Examples
+///
+/// An easy way to detect all regions of an image that have been forged:
+///
+/// ```no_run
+/// # use forgery_detection_zero::Zero;
+/// # let jpeg = todo!();
+/// #
+/// for r in Zero::from_image(&jpeg).into_iter() {
+///     println!(
+///         "Forged region detected: from ({}, {}) to ({}, {})",
+///         r.start.0, r.start.1, r.end.0, r.end.1,
+///     )
+/// }
+/// ```
 pub struct Zero {
     luminance: LuminanceImage,
 }
@@ -199,7 +234,11 @@ impl Zero {
         })
     }
 
-    /// Runs the forgery detection algorithm
+    /// Runs the forgery detection algorithm.
+    ///
+    /// This is the more advanced API.
+    /// If you just want to know the bounding box of each forged region in the image,
+    /// you can call [`IntoIterator::into_iter`] instead.
     pub fn detect_forgeries(self) -> ForeignGridAreas {
         let votes = Votes::from_luminance(&self.luminance);
         let (main_grid, lnfa_grids) = votes.detect_global_grids();
@@ -212,6 +251,26 @@ impl Zero {
             lnfa_grids,
             main_grid,
         }
+    }
+}
+
+#[cfg(feature = "image")]
+impl IntoIterator for Zero {
+    type Item = ForgedRegion;
+
+    type IntoIter = Box<dyn Iterator<Item = ForgedRegion>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let foreign_grid_areas = self.detect_forgeries();
+        let missing_grid_regions = foreign_grid_areas
+            .detect_missing_grid_areas()
+            .ok()
+            .flatten()
+            .into_iter()
+            .flat_map(IntoIterator::into_iter);
+        let forged_regions = foreign_grid_areas.into_iter().chain(missing_grid_regions);
+
+        Box::new(forged_regions)
     }
 }
 
