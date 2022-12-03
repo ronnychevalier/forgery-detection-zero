@@ -27,7 +27,6 @@ jpeg-encoder = { version = "0.5", features = ["simd"] }
 
 [dev-dependencies]
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
 
 [profile.release]
 lto = true
