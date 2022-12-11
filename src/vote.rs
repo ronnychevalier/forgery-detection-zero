@@ -1,7 +1,7 @@
 #![warn(missing_docs)]
 
 use std::f64::consts::{LN_10, PI};
-use std::ops::{Index, IndexMut};
+use std::ops::Index;
 use std::sync::Mutex;
 
 use bitvec::bitvec;
@@ -69,13 +69,15 @@ impl Index<[u32; 2]> for Votes {
     }
 }
 
-impl IndexMut<usize> for Votes {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.votes[index]
-    }
-}
-
 impl Votes {
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Vote> {
+        self.votes.iter()
+    }
+
+    pub(crate) fn iter_mut(&mut self) -> std::slice::IterMut<'_, Vote> {
+        self.votes.iter_mut()
+    }
+
     /// Computes the votes for the given luminance image
     pub(crate) fn from_luminance(image: &LuminanceImage) -> Self {
         struct State {

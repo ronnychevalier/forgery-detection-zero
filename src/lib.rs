@@ -121,12 +121,9 @@ impl ForeignGridAreas {
 
         let mut jpeg_99_votes = Votes::from_luminance(&jpeg_99);
         // update votemap by avoiding the votes for the main grid
-        for x in 0..self.votes.width {
-            for y in 0..self.votes.height {
-                let index = (x + y * self.votes.width) as usize;
-                if self.votes[index] == Vote::AlignedWith(main_grid) {
-                    jpeg_99_votes[index] = Vote::Invalid;
-                }
+        for (&vote, vote_99) in self.votes.iter().zip(jpeg_99_votes.iter_mut()) {
+            if vote == Vote::AlignedWith(main_grid) {
+                *vote_99 = Vote::Invalid;
             }
         }
 
